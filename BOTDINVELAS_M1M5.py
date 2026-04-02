@@ -389,8 +389,10 @@ def _load_from_config() -> None:
         globals()[sg_key] = _cfgget(sec, 'v15_score_gap_min', globals()[sg_key], int)
         globals()[cp_key] = _cfgget(sec, 'v15_confirm_polls', globals()[cp_key], int)
 
-        # V15 shared (M5 loaded last → M5 values take precedence for shared globals)
-        # Per-TF score/gap/polls are stored separately; shared params are calibration values
+        # V15 shared params — loaded from both [M1] and [M5] sections (M5 loaded last,
+        # so M5 values overwrite M1 values for RSI_PERIOD, BB_PERIOD, etc.).
+        # These calibration values are typically the same for both TFs; per-TF score/gap/polls
+        # use dedicated globals (V15_SCORE_MIN_M1/M5, etc.) and are not overwritten here.
         globals()['V15_RSI_PERIOD'] = _cfgget(sec, 'v15_rsi_period', V15_RSI_PERIOD, int)
         globals()['V15_RSI_OVERSOLD'] = _cfgget(sec, 'v15_rsi_oversold', V15_RSI_OVERSOLD, int)
         globals()['V15_RSI_OVERBOUGHT'] = _cfgget(sec, 'v15_rsi_overbought', V15_RSI_OVERBOUGHT, int)
@@ -1402,20 +1404,20 @@ def pivot_highs(
     result: List[Tuple[int, float]] = []
     n = len(velas)
     for i in range(left, n - right):
-        h_raw = velas[i].get("max") or velas[i].get("high")
+        h_raw = velas[i].get("max") if velas[i].get("max") is not None else velas[i].get("high")
         if h_raw is None:
             continue
         h = float(h_raw)
         neighbours_ok = True
         for j in range(i - left, i):
-            hj_raw = velas[j].get("max") or velas[j].get("high")
+            hj_raw = velas[j].get("max") if velas[j].get("max") is not None else velas[j].get("high")
             if hj_raw is None or float(hj_raw) > h:
                 neighbours_ok = False
                 break
         if not neighbours_ok:
             continue
         for j in range(i + 1, i + right + 1):
-            hj_raw = velas[j].get("max") or velas[j].get("high")
+            hj_raw = velas[j].get("max") if velas[j].get("max") is not None else velas[j].get("high")
             if hj_raw is None or float(hj_raw) > h:
                 neighbours_ok = False
                 break
@@ -1431,20 +1433,20 @@ def pivot_lows(
     result: List[Tuple[int, float]] = []
     n = len(velas)
     for i in range(left, n - right):
-        l_raw = velas[i].get("min") or velas[i].get("low")
+        l_raw = velas[i].get("min") if velas[i].get("min") is not None else velas[i].get("low")
         if l_raw is None:
             continue
         l = float(l_raw)
         neighbours_ok = True
         for j in range(i - left, i):
-            lj_raw = velas[j].get("min") or velas[j].get("low")
+            lj_raw = velas[j].get("min") if velas[j].get("min") is not None else velas[j].get("low")
             if lj_raw is None or float(lj_raw) < l:
                 neighbours_ok = False
                 break
         if not neighbours_ok:
             continue
         for j in range(i + 1, i + right + 1):
-            lj_raw = velas[j].get("min") or velas[j].get("low")
+            lj_raw = velas[j].get("min") if velas[j].get("min") is not None else velas[j].get("low")
             if lj_raw is None or float(lj_raw) < l:
                 neighbours_ok = False
                 break
@@ -1579,7 +1581,7 @@ def _detect_respiro(
             impulse_size = abs(imp_end - imp_start)
             if impulse_size < 1e-10:
                 continue
-            pb_retrace = (pb_closes[-1] - imp_end) / impulse_size
+            pb_retrace = abs(pb_closes[-1] - imp_end) / impulse_size
             if pb_retrace > pb_max_frac or pb_retrace < 0.05:
                 continue
             # Gatilho de PUT: vela candidata fecha abaixo da mínima do pullback
