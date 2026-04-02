@@ -125,7 +125,7 @@ entry_window_seconds = 25
 #### Motor de Reversão V15
 ```ini
 [M1]
-v15_score_min           = 55    # score mínimo para entrada (0–145)
+v15_score_min           = 55    # score mínimo para entrada (0–135)
 v15_score_gap_min       = 1     # diferença mínima call vs put
 v15_confirm_polls       = 1     # polls de confirmação consecutivos
 v15_rsi_period          = 14
@@ -180,7 +180,7 @@ respiro_confirm_polls        = 1
 
 ### 1) Reversão (V15) — padrão
 - Motor de score composto: RSI + BB + Wick + Impulso/Contexto + Keltner + Engolfo/Pinça
-- Score máximo: ~145 pts
+- Score máximo: 135 pts (25+25+25+25+20+15)
 - Sinal disparado quando score ≥ `v15_score_min` com vantagem ≥ `v15_score_gap_min`
 - Filtros estruturais M1 (1/3 do micro-range) e M5 (20% extremo do range)
 

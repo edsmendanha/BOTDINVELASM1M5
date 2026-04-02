@@ -343,8 +343,12 @@ def _load_from_config() -> None:
         sec = tf_label  # e.g. 'M1' or 'M5'
         is_m5 = (sec == 'M5')
 
-        # Entry mode
+        # Entry mode — validate: only 'reversal' and 'continuation' are valid
+        _VALID_MODES = ('reversal', 'continuation')
         em = _cfgget(sec, 'entry_mode', 'reversal').strip().lower()
+        if em not in _VALID_MODES:
+            print(f"⚠️  config.txt [{sec}].entry_mode='{em}' inválido. Usando 'reversal'.")
+            em = 'reversal'
         if is_m5:
             globals()['ENTRY_MODE_M5'] = em
         else:
@@ -385,7 +389,8 @@ def _load_from_config() -> None:
         globals()[sg_key] = _cfgget(sec, 'v15_score_gap_min', globals()[sg_key], int)
         globals()[cp_key] = _cfgget(sec, 'v15_confirm_polls', globals()[cp_key], int)
 
-        # V15 shared (last writer wins — use M1 values as primary if both present)
+        # V15 shared (M5 loaded last → M5 values take precedence for shared globals)
+        # Per-TF score/gap/polls are stored separately; shared params are calibration values
         globals()['V15_RSI_PERIOD'] = _cfgget(sec, 'v15_rsi_period', V15_RSI_PERIOD, int)
         globals()['V15_RSI_OVERSOLD'] = _cfgget(sec, 'v15_rsi_oversold', V15_RSI_OVERSOLD, int)
         globals()['V15_RSI_OVERBOUGHT'] = _cfgget(sec, 'v15_rsi_overbought', V15_RSI_OVERBOUGHT, int)
@@ -1397,9 +1402,24 @@ def pivot_highs(
     result: List[Tuple[int, float]] = []
     n = len(velas)
     for i in range(left, n - right):
-        h = float(velas[i].get("max", velas[i].get("high", 0)))
-        if all(float(velas[j].get("max", 0)) <= h for j in range(i - left, i)) and \
-           all(float(velas[j].get("max", 0)) <= h for j in range(i + 1, i + right + 1)):
+        h_raw = velas[i].get("max") or velas[i].get("high")
+        if h_raw is None:
+            continue
+        h = float(h_raw)
+        neighbours_ok = True
+        for j in range(i - left, i):
+            hj_raw = velas[j].get("max") or velas[j].get("high")
+            if hj_raw is None or float(hj_raw) > h:
+                neighbours_ok = False
+                break
+        if not neighbours_ok:
+            continue
+        for j in range(i + 1, i + right + 1):
+            hj_raw = velas[j].get("max") or velas[j].get("high")
+            if hj_raw is None or float(hj_raw) > h:
+                neighbours_ok = False
+                break
+        if neighbours_ok:
             result.append((i, h))
     return result
 
@@ -1411,9 +1431,24 @@ def pivot_lows(
     result: List[Tuple[int, float]] = []
     n = len(velas)
     for i in range(left, n - right):
-        l = float(velas[i].get("min", velas[i].get("low", 0)))
-        if all(float(velas[j].get("min", 999999)) >= l for j in range(i - left, i)) and \
-           all(float(velas[j].get("min", 999999)) >= l for j in range(i + 1, i + right + 1)):
+        l_raw = velas[i].get("min") or velas[i].get("low")
+        if l_raw is None:
+            continue
+        l = float(l_raw)
+        neighbours_ok = True
+        for j in range(i - left, i):
+            lj_raw = velas[j].get("min") or velas[j].get("low")
+            if lj_raw is None or float(lj_raw) < l:
+                neighbours_ok = False
+                break
+        if not neighbours_ok:
+            continue
+        for j in range(i + 1, i + right + 1):
+            lj_raw = velas[j].get("min") or velas[j].get("low")
+            if lj_raw is None or float(lj_raw) < l:
+                neighbours_ok = False
+                break
+        if neighbours_ok:
             result.append((i, l))
     return result
 
@@ -1519,8 +1554,15 @@ def _detect_respiro(
         pb_closes = [float(v["close"]) for v in pb_window]
         if direction == "call":
             # Pullback de baixa após impulso de alta
-            pb_ok = all(pb_closes[i] <= pb_closes[i-1] or True for i in range(1, len(pb_closes)))
-            pb_retrace = (imp_end - pb_closes[-1]) / max(abs(imp_move * abs(imp_start)), 1e-12)
+            # Verificar que pelo menos metade das velas do pullback são de baixa
+            pb_bearish = sum(1 for i in range(1, len(pb_closes)) if pb_closes[i] < pb_closes[i-1])
+            pb_ok = pb_bearish >= max(1, len(pb_closes) // 2)
+            if not pb_ok:
+                continue
+            impulse_size = abs(imp_end - imp_start)
+            if impulse_size < 1e-10:
+                continue
+            pb_retrace = (imp_end - pb_closes[-1]) / impulse_size
             if pb_retrace > pb_max_frac or pb_retrace < 0.05:
                 continue   # pullback inexistente ou muito profundo
             # Gatilho de CALL: vela candidata fecha acima do máximo do pullback
@@ -1530,8 +1572,14 @@ def _detect_respiro(
                 continue
         else:
             # Pullback de alta após impulso de baixa
-            pb_ok = all(pb_closes[i] >= pb_closes[i-1] or True for i in range(1, len(pb_closes)))
-            pb_retrace = (pb_closes[-1] - imp_end) / max(abs(imp_move * abs(imp_start)), 1e-12)
+            pb_bullish = sum(1 for i in range(1, len(pb_closes)) if pb_closes[i] > pb_closes[i-1])
+            pb_ok = pb_bullish >= max(1, len(pb_closes) // 2)
+            if not pb_ok:
+                continue
+            impulse_size = abs(imp_end - imp_start)
+            if impulse_size < 1e-10:
+                continue
+            pb_retrace = (pb_closes[-1] - imp_end) / impulse_size
             if pb_retrace > pb_max_frac or pb_retrace < 0.05:
                 continue
             # Gatilho de PUT: vela candidata fecha abaixo da mínima do pullback
@@ -3910,9 +3958,10 @@ if __name__ == '__main__':
     run_minutes = ask_run_duration()
 
     # Modo de entrada (reversal / continuation)
-    # O menu permite escolher; os per-TF defaults foram carregados de config.txt
+    # O menu interativo sobrescreve os defaults do config.txt para a sessão atual.
+    # Isso é intencional: o menu dá controle explícito a cada execução.
     ENTRY_MODE = ask_entry_mode()
-    # Aplica modo selecionado para ambas as TFs (pode ser sobrescrito por config)
+    # Aplica modo selecionado para ambas as TFs na sessão atual
     ENTRY_MODE_M1 = ENTRY_MODE
     ENTRY_MODE_M5 = ENTRY_MODE
 

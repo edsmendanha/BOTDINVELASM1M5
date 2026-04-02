@@ -19,8 +19,8 @@ purchase_buffer_seconds = 1
 [MARKET]
 # =============================================================================
 # SEGURANÇA: impede operações ao vivo em OTC quando a conta for REAL.
-# true  = bloquear OTC em conta real  (recomendado — opera somente mercado aberto)
-# false = permitir OTC em conta real  (apenas para testes em DEMO)
+# false = bloquear OTC em conta real (padrão recomendado)
+# true  = permitir OTC em conta real (apenas para testes)
 allow_otc_live = false
 
 # =============================================================================
