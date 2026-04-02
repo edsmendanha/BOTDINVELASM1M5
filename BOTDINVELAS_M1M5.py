@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-03-26-digital-first-v5"
+BOTDIN_VERSION = "2026-04-02-config-extern-v6"
 
 # =========================
 # CONFIG
@@ -26,6 +26,34 @@ config = ConfigObj('config.txt')
 email = config['LOGIN']['email']
 senha = config['LOGIN']['senha']
 tipo_default = config['AJUSTES'].get('tipo', 'binarias').strip().lower()
+
+
+# =========================
+# CONFIG HELPERS
+# =========================
+def _cfgget(section: str, key: str, default, type_fn=None):
+    """Reads a config value safely, returning *default* when absent or invalid."""
+    try:
+        val = config.get(section, {}).get(key)
+        if val is None:
+            return default
+        val = str(val).strip()
+        if not val:
+            return default
+        return type_fn(val) if type_fn is not None else val
+    except Exception:
+        return default
+
+
+def _cfgbool(section: str, key: str, default: bool) -> bool:
+    """Reads a boolean config value (true/1/yes/sim → True)."""
+    try:
+        val = config.get(section, {}).get(key)
+        if val is None:
+            return default
+        return str(val).strip().lower() in ('true', '1', 'yes', 'sim')
+    except Exception:
+        return default
 
 DEBUG = True
 
@@ -195,6 +223,238 @@ MAX_ENTRIES = 0
 
 BLOCKED_COUNTERS = defaultdict(int)
 
+# =========================
+# GLOBALS POR TIMEFRAME — Keltner, Pivô, Respiro, V15 per-TF
+# (sobrescritos em _load_from_config() com valores do config.txt)
+# =========================
+
+# Modo de entrada por timeframe (reversal | continuation)
+ENTRY_MODE_M1: str = "reversal"
+ENTRY_MODE_M5: str = "reversal"
+
+# Canal Keltner por TF
+KELTNER_ENABLE_M1: bool = True
+KELTNER_PERIOD_M1: int = 20
+KELTNER_SHIFT_M1: float = 1.5
+KELTNER_ENABLE_M5: bool = True
+KELTNER_PERIOD_M5: int = 20
+KELTNER_SHIFT_M5: float = 1.5
+
+# Pivô/Fractal por TF
+PIVOT_ENABLE_M1: bool = True
+PIVOT_LEFT_M1: int = 2
+PIVOT_RIGHT_M1: int = 2
+PIVOT_PROXIMITY_PCT_M1: float = 0.002
+PIVOT_ENABLE_M5: bool = True
+PIVOT_LEFT_M5: int = 2
+PIVOT_RIGHT_M5: int = 2
+PIVOT_PROXIMITY_PCT_M5: float = 0.002
+
+# Respiro (Continuação) por TF
+RESPIRO_ENABLE_M1: bool = False
+RESPIRO_IMPULSE_LOOKBACK_M1: int = 5
+RESPIRO_MIN_IMPULSE_M1: float = 0.0010
+RESPIRO_PULLBACK_MAX_FRAC_M1: float = 0.618
+RESPIRO_MAX_PULLBACK_CANDLES_M1: int = 3
+RESPIRO_TRIGGER_M1: str = "close_over_high"
+RESPIRO_CONFIRM_POLLS_M1: int = 1
+RESPIRO_ENABLE_M5: bool = False
+RESPIRO_IMPULSE_LOOKBACK_M5: int = 5
+RESPIRO_MIN_IMPULSE_M5: float = 0.0010
+RESPIRO_PULLBACK_MAX_FRAC_M5: float = 0.618
+RESPIRO_MAX_PULLBACK_CANDLES_M5: int = 3
+RESPIRO_TRIGGER_M5: str = "close_over_high"
+RESPIRO_CONFIRM_POLLS_M5: int = 1
+
+# Restrição de OTC em conta real
+ALLOW_OTC_LIVE: bool = False
+
+# V15 per-timeframe (defaults = valores globais; sobrescritos em _load_from_config)
+V15_SCORE_MIN_M1: int = 55
+V15_SCORE_MIN_M5: int = 55
+V15_SCORE_GAP_MIN_M1: int = 1
+V15_SCORE_GAP_MIN_M5: int = 1
+V15_CONFIRM_POLLS_M1: int = 1
+V15_CONFIRM_POLLS_M5: int = 1
+
+
+def _load_from_config() -> None:
+    """Carrega todos os parâmetros de estratégia do config.txt e sobrescreve os globals.
+
+    Chamada uma vez no início do main. Garante retrocompatibilidade: se uma seção
+    ou chave não existir no config.txt, o default hardcoded é preservado.
+    """
+    global IDLE_SLEEP_S_M1, IDLE_SLEEP_S_M5, PENDING_SLEEP_S_M1, PENDING_SLEEP_S_M5
+    global AMOUNT_MODE, AMOUNT_FIXED, AMOUNT_PERCENT, AMOUNT_RECALC_EACH, AMOUNT_MIN
+    global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
+    global ALLOW_OTC_LIVE
+    global ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR
+    global ATR_MIN_RATIO_ABS_M1, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M1
+    global ATR_RATIO_QUEUE_M1, ATR_RATIO_QUEUE_M5
+    global ENABLE_TREND_STRENGTH_FILTER, ADX_PERIOD
+    global ADX_MIN_M1, ADX_MIN_M5, BB_PERIOD, BB_STD
+    global BB_WIDTH_MIN_M1, BB_WIDTH_MIN_M5, SLOPE_LOOKBACK, SLOPE_MIN_M1, SLOPE_MIN_M5
+    global ENTRY_WINDOW_SECONDS_M1, ENTRY_WINDOW_SECONDS_M5
+    global V15_SCORE_MIN, V15_SCORE_GAP_MIN, V15_CONFIRM_POLLS
+    global V15_RSI_PERIOD, V15_RSI_OVERSOLD, V15_RSI_OVERBOUGHT
+    global V15_BB_PERIOD, V15_BB_STD, V15_BB_PROXIMITY
+    global V15_IMPULSE_LOOKBACK, V15_CONTEXT_LOOKBACK
+    global V15_WICK_RATIO, V15_CANDLES_NEEDED
+    global V15_TREND_THRESHOLD, V15_IMPULSE_THRESHOLD
+    global V15_IMPULSE_MULTIPLIER, V15_WICK_SCORE_MAX, V15_WICK_SCORE_FACTOR
+    global V15_FALLBACK_NEAR_SCORE_M1
+    global M5_EXTREME_CANDLES, M5_EXTREME_FRAC, M1_STRUCTURAL_CANDLES
+    global V15_SCORE_MIN_M1, V15_SCORE_MIN_M5
+    global V15_SCORE_GAP_MIN_M1, V15_SCORE_GAP_MIN_M5
+    global V15_CONFIRM_POLLS_M1, V15_CONFIRM_POLLS_M5
+    global ENTRY_MODE_M1, ENTRY_MODE_M5
+    global KELTNER_ENABLE_M1, KELTNER_PERIOD_M1, KELTNER_SHIFT_M1
+    global KELTNER_ENABLE_M5, KELTNER_PERIOD_M5, KELTNER_SHIFT_M5
+    global PIVOT_ENABLE_M1, PIVOT_LEFT_M1, PIVOT_RIGHT_M1, PIVOT_PROXIMITY_PCT_M1
+    global PIVOT_ENABLE_M5, PIVOT_LEFT_M5, PIVOT_RIGHT_M5, PIVOT_PROXIMITY_PCT_M5
+    global RESPIRO_ENABLE_M1, RESPIRO_IMPULSE_LOOKBACK_M1, RESPIRO_MIN_IMPULSE_M1
+    global RESPIRO_PULLBACK_MAX_FRAC_M1, RESPIRO_MAX_PULLBACK_CANDLES_M1
+    global RESPIRO_TRIGGER_M1, RESPIRO_CONFIRM_POLLS_M1
+    global RESPIRO_ENABLE_M5, RESPIRO_IMPULSE_LOOKBACK_M5, RESPIRO_MIN_IMPULSE_M5
+    global RESPIRO_PULLBACK_MAX_FRAC_M5, RESPIRO_MAX_PULLBACK_CANDLES_M5
+    global RESPIRO_TRIGGER_M5, RESPIRO_CONFIRM_POLLS_M5
+
+    # [MARKET]
+    ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
+
+    # [SLEEP]
+    IDLE_SLEEP_S_M1 = _cfgget('SLEEP', 'idle_sleep_m1', IDLE_SLEEP_S_M1, float)
+    IDLE_SLEEP_S_M5 = _cfgget('SLEEP', 'idle_sleep_m5', IDLE_SLEEP_S_M5, float)
+    PENDING_SLEEP_S_M1 = _cfgget('SLEEP', 'pending_sleep_m1', PENDING_SLEEP_S_M1, float)
+    PENDING_SLEEP_S_M5 = _cfgget('SLEEP', 'pending_sleep_m5', PENDING_SLEEP_S_M5, float)
+
+    # [RISK]
+    AMOUNT_MODE = _cfgget('RISK', 'amount_mode', AMOUNT_MODE)
+    AMOUNT_FIXED = _cfgget('RISK', 'amount_fixed', AMOUNT_FIXED, float)
+    AMOUNT_PERCENT = _cfgget('RISK', 'amount_percent', AMOUNT_PERCENT, float)
+    AMOUNT_RECALC_EACH = _cfgbool('RISK', 'amount_recalc_each', AMOUNT_RECALC_EACH)
+    AMOUNT_MIN = _cfgget('RISK', 'amount_min', AMOUNT_MIN, float)
+    STOP_LOSS_PCT = _cfgget('RISK', 'stop_loss_pct', STOP_LOSS_PCT, float)
+    STOP_WIN_PCT = _cfgget('RISK', 'stop_win_pct', STOP_WIN_PCT, float)
+    MAX_ENTRIES = _cfgget('RISK', 'max_entries', MAX_ENTRIES, int)
+
+    def _load_tf(tf_label: str) -> None:
+        """Loads [M1] or [M5] section and updates the corresponding globals."""
+        sec = tf_label  # e.g. 'M1' or 'M5'
+        is_m5 = (sec == 'M5')
+
+        # Entry mode
+        em = _cfgget(sec, 'entry_mode', 'reversal').strip().lower()
+        if is_m5:
+            globals()['ENTRY_MODE_M5'] = em
+        else:
+            globals()['ENTRY_MODE_M1'] = em
+
+        # ATR
+        if is_m5:
+            globals()['ATR_MIN_RATIO_ABS_M5'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M5, float)
+        else:
+            globals()['ENABLE_ATR_FILTER'] = _cfgbool(sec, 'enable_atr_filter', ENABLE_ATR_FILTER)
+            globals()['ATR_PERIOD'] = _cfgget(sec, 'atr_period', ATR_PERIOD, int)
+            globals()['ATR_ADAPTIVE_WINDOW'] = _cfgget(sec, 'atr_adaptive_window', ATR_ADAPTIVE_WINDOW, int)
+            globals()['ATR_ADAPTIVE_FACTOR'] = _cfgget(sec, 'atr_adaptive_factor', ATR_ADAPTIVE_FACTOR, float)
+            globals()['ATR_MAX_THR_M1'] = _cfgget(sec, 'atr_max_thr', ATR_MAX_THR_M1, float)
+            globals()['ATR_MIN_RATIO_ABS_M1'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M1, float)
+
+        # ADX/BB/Slope
+        adx_key = 'ADX_MIN_M5' if is_m5 else 'ADX_MIN_M1'
+        bb_key = 'BB_WIDTH_MIN_M5' if is_m5 else 'BB_WIDTH_MIN_M1'
+        slp_key = 'SLOPE_MIN_M5' if is_m5 else 'SLOPE_MIN_M1'
+        ew_key = 'ENTRY_WINDOW_SECONDS_M5' if is_m5 else 'ENTRY_WINDOW_SECONDS_M1'
+
+        globals()['ENABLE_TREND_STRENGTH_FILTER'] = _cfgbool(sec, 'enable_trend_filter', ENABLE_TREND_STRENGTH_FILTER)
+        globals()['ADX_PERIOD'] = _cfgget(sec, 'adx_period', ADX_PERIOD, int)
+        globals()[adx_key] = _cfgget(sec, 'adx_min', globals()[adx_key], float)
+        globals()['BB_PERIOD'] = _cfgget(sec, 'bb_period', BB_PERIOD, int)
+        globals()['BB_STD'] = _cfgget(sec, 'bb_std', BB_STD, float)
+        globals()[bb_key] = _cfgget(sec, 'bb_width_min', globals()[bb_key], float)
+        globals()['SLOPE_LOOKBACK'] = _cfgget(sec, 'slope_lookback', SLOPE_LOOKBACK, int)
+        globals()[slp_key] = _cfgget(sec, 'slope_min', globals()[slp_key], float)
+        globals()[ew_key] = _cfgget(sec, 'entry_window_seconds', globals()[ew_key], int)
+
+        # V15 per-TF
+        sm_key = 'V15_SCORE_MIN_M5' if is_m5 else 'V15_SCORE_MIN_M1'
+        sg_key = 'V15_SCORE_GAP_MIN_M5' if is_m5 else 'V15_SCORE_GAP_MIN_M1'
+        cp_key = 'V15_CONFIRM_POLLS_M5' if is_m5 else 'V15_CONFIRM_POLLS_M1'
+        globals()[sm_key] = _cfgget(sec, 'v15_score_min', globals()[sm_key], int)
+        globals()[sg_key] = _cfgget(sec, 'v15_score_gap_min', globals()[sg_key], int)
+        globals()[cp_key] = _cfgget(sec, 'v15_confirm_polls', globals()[cp_key], int)
+
+        # V15 shared (last writer wins — use M1 values as primary if both present)
+        globals()['V15_RSI_PERIOD'] = _cfgget(sec, 'v15_rsi_period', V15_RSI_PERIOD, int)
+        globals()['V15_RSI_OVERSOLD'] = _cfgget(sec, 'v15_rsi_oversold', V15_RSI_OVERSOLD, int)
+        globals()['V15_RSI_OVERBOUGHT'] = _cfgget(sec, 'v15_rsi_overbought', V15_RSI_OVERBOUGHT, int)
+        globals()['V15_BB_PERIOD'] = _cfgget(sec, 'v15_bb_period', V15_BB_PERIOD, int)
+        globals()['V15_BB_STD'] = _cfgget(sec, 'v15_bb_std', V15_BB_STD, float)
+        globals()['V15_BB_PROXIMITY'] = _cfgget(sec, 'v15_bb_proximity', V15_BB_PROXIMITY, float)
+        globals()['V15_IMPULSE_LOOKBACK'] = _cfgget(sec, 'v15_impulse_lookback', V15_IMPULSE_LOOKBACK, int)
+        globals()['V15_CONTEXT_LOOKBACK'] = _cfgget(sec, 'v15_context_lookback', V15_CONTEXT_LOOKBACK, int)
+        globals()['V15_WICK_RATIO'] = _cfgget(sec, 'v15_wick_ratio', V15_WICK_RATIO, float)
+        globals()['V15_CANDLES_NEEDED'] = _cfgget(sec, 'v15_candles_needed', V15_CANDLES_NEEDED, int)
+        globals()['V15_TREND_THRESHOLD'] = _cfgget(sec, 'v15_trend_threshold', V15_TREND_THRESHOLD, float)
+        globals()['V15_IMPULSE_THRESHOLD'] = _cfgget(sec, 'v15_impulse_threshold', V15_IMPULSE_THRESHOLD, float)
+        globals()['V15_IMPULSE_MULTIPLIER'] = _cfgget(sec, 'v15_impulse_multiplier', V15_IMPULSE_MULTIPLIER, int)
+        globals()['V15_WICK_SCORE_MAX'] = _cfgget(sec, 'v15_wick_score_max', V15_WICK_SCORE_MAX, int)
+        globals()['V15_WICK_SCORE_FACTOR'] = _cfgget(sec, 'v15_wick_score_factor', V15_WICK_SCORE_FACTOR, int)
+        globals()['V15_FALLBACK_NEAR_SCORE_M1'] = _cfgget(sec, 'v15_fallback_near_score', V15_FALLBACK_NEAR_SCORE_M1, int)
+
+        if is_m5:
+            globals()['M5_EXTREME_CANDLES'] = _cfgget(sec, 'm5_extreme_candles', M5_EXTREME_CANDLES, int)
+            globals()['M5_EXTREME_FRAC'] = _cfgget(sec, 'm5_extreme_frac', M5_EXTREME_FRAC, float)
+        else:
+            globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
+
+        # Keltner
+        ke_key = 'KELTNER_ENABLE_M5' if is_m5 else 'KELTNER_ENABLE_M1'
+        kp_key = 'KELTNER_PERIOD_M5' if is_m5 else 'KELTNER_PERIOD_M1'
+        ks_key = 'KELTNER_SHIFT_M5' if is_m5 else 'KELTNER_SHIFT_M1'
+        globals()[ke_key] = _cfgbool(sec, 'keltner_enable', globals()[ke_key])
+        globals()[kp_key] = _cfgget(sec, 'keltner_period', globals()[kp_key], int)
+        globals()[ks_key] = _cfgget(sec, 'keltner_shift', globals()[ks_key], float)
+
+        # Pivot
+        pe_key = 'PIVOT_ENABLE_M5' if is_m5 else 'PIVOT_ENABLE_M1'
+        pl_key = 'PIVOT_LEFT_M5' if is_m5 else 'PIVOT_LEFT_M1'
+        pr_key = 'PIVOT_RIGHT_M5' if is_m5 else 'PIVOT_RIGHT_M1'
+        pp_key = 'PIVOT_PROXIMITY_PCT_M5' if is_m5 else 'PIVOT_PROXIMITY_PCT_M1'
+        globals()[pe_key] = _cfgbool(sec, 'pivot_enable', globals()[pe_key])
+        globals()[pl_key] = _cfgget(sec, 'pivot_left', globals()[pl_key], int)
+        globals()[pr_key] = _cfgget(sec, 'pivot_right', globals()[pr_key], int)
+        globals()[pp_key] = _cfgget(sec, 'pivot_proximity_pct', globals()[pp_key], float)
+
+        # Respiro
+        re_key = 'RESPIRO_ENABLE_M5' if is_m5 else 'RESPIRO_ENABLE_M1'
+        ril_key = 'RESPIRO_IMPULSE_LOOKBACK_M5' if is_m5 else 'RESPIRO_IMPULSE_LOOKBACK_M1'
+        rmi_key = 'RESPIRO_MIN_IMPULSE_M5' if is_m5 else 'RESPIRO_MIN_IMPULSE_M1'
+        rpf_key = 'RESPIRO_PULLBACK_MAX_FRAC_M5' if is_m5 else 'RESPIRO_PULLBACK_MAX_FRAC_M1'
+        rpc_key = 'RESPIRO_MAX_PULLBACK_CANDLES_M5' if is_m5 else 'RESPIRO_MAX_PULLBACK_CANDLES_M1'
+        rt_key = 'RESPIRO_TRIGGER_M5' if is_m5 else 'RESPIRO_TRIGGER_M1'
+        rcp_key = 'RESPIRO_CONFIRM_POLLS_M5' if is_m5 else 'RESPIRO_CONFIRM_POLLS_M1'
+        globals()[re_key] = _cfgbool(sec, 'respiro_enable', globals()[re_key])
+        globals()[ril_key] = _cfgget(sec, 'respiro_impulse_lookback', globals()[ril_key], int)
+        globals()[rmi_key] = _cfgget(sec, 'respiro_min_impulse', globals()[rmi_key], float)
+        globals()[rpf_key] = _cfgget(sec, 'respiro_pullback_max_frac', globals()[rpf_key], float)
+        globals()[rpc_key] = _cfgget(sec, 'respiro_max_pullback_candles', globals()[rpc_key], int)
+        globals()[rt_key] = _cfgget(sec, 'respiro_trigger', globals()[rt_key])
+        globals()[rcp_key] = _cfgget(sec, 'respiro_confirm_polls', globals()[rcp_key], int)
+
+    _load_tf('M1')
+    _load_tf('M5')
+
+    # Re-sync shared V15 global (keep backward compat: V15_SCORE_MIN stays as M1 default)
+    globals()['V15_SCORE_MIN'] = globals()['V15_SCORE_MIN_M1']
+    globals()['V15_SCORE_GAP_MIN'] = globals()['V15_SCORE_GAP_MIN_M1']
+    globals()['V15_CONFIRM_POLLS'] = globals()['V15_CONFIRM_POLLS_M1']
+
+    # Rebuild ATR queues if adaptive window changed
+    globals()['ATR_RATIO_QUEUE_M1'] = deque(maxlen=globals()['ATR_ADAPTIVE_WINDOW'])
+    globals()['ATR_RATIO_QUEUE_M5'] = deque(maxlen=globals()['ATR_ADAPTIVE_WINDOW'])
+
 pending: Optional[Dict[str, Any]] = None
 pending_id_active: Optional[Tuple[str, int, str, int]] = None
 pending_lock_until_ts: int = 0
@@ -243,6 +503,7 @@ def _ensure_csv_headers():
                 'pattern_name', 'pattern_from',
                 'secs_left_at_buy',
                 'trade_ativo', 'market_type',
+                'strategy',
             ])
     if not PATTERNS_CSV.exists():
         with PATTERNS_CSV.open('w', newline='', encoding='utf-8') as f:
@@ -251,7 +512,9 @@ def _ensure_csv_headers():
                 'ativo', 'tf_min', 'event',
                 'pattern_name', 'pattern_mode', 'pattern_from', 'expected_confirm_from',
                 'direction_hint', 'confirmed', 'confirm_from',
-                'rsi_pts', 'bb_pts', 'wick_pts', 'imp_pts', 'call_score', 'put_score',
+                'rsi_pts', 'bb_pts', 'wick_pts', 'imp_pts', 'keltner_pts', 'engulf_pts',
+                'call_score', 'put_score',
+                'strategy', 'pivot_prox',
                 'block_reason', 'details'
             ])
 
@@ -321,8 +584,12 @@ def _log_pattern_row(
             sig.get("bb_pts", "") if sig else "",
             sig.get("wick_pts", "") if sig else "",
             sig.get("imp_pts", "") if sig else "",
+            sig.get("keltner_pts", "") if sig else "",
+            sig.get("engulf_pts", "") if sig else "",
             sig.get("call_score", "") if sig else "",
             sig.get("put_score", "") if sig else "",
+            sig.get("strategy", "") if sig else "",
+            sig.get("pivot_prox", "") if sig else "",
             block_reason or "",
             details or "",
         ]
@@ -961,38 +1228,367 @@ def is_harami_bullish(prev_c, cur_c) -> bool:
 
 
 # =========================
+# PADRÕES ADICIONAIS (Engolfo e Pinça / Tweezer)
+# =========================
+def is_engulfing_bullish(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> bool:
+    """Engolfo de Alta (Bullish Engulfing): vela atual alta e de corpo maior que vela prévia baixa."""
+    p0 = _candle_parts(prev_c)
+    p1 = _candle_parts(cur_c)
+    if not (p0["close"] < p0["open"]):   # prévia deve ser baixa
+        return False
+    if not (p1["close"] > p1["open"]):   # atual deve ser alta
+        return False
+    # Corpo atual maior e "engolfa" o corpo anterior
+    if not (p1["open"] <= p0["close"] and p1["close"] >= p0["open"]):
+        return False
+    # Corpo atual deve ser significativamente maior que o anterior
+    body0 = abs(p0["close"] - p0["open"])
+    body1 = abs(p1["close"] - p1["open"])
+    return body1 > body0 * 0.9
+
+
+def is_engulfing_bearish(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> bool:
+    """Engolfo de Baixa (Bearish Engulfing): vela atual baixa e de corpo maior que vela prévia alta."""
+    p0 = _candle_parts(prev_c)
+    p1 = _candle_parts(cur_c)
+    if not (p0["close"] > p0["open"]):   # prévia deve ser alta
+        return False
+    if not (p1["close"] < p1["open"]):   # atual deve ser baixa
+        return False
+    if not (p1["open"] >= p0["close"] and p1["close"] <= p0["open"]):
+        return False
+    body0 = abs(p0["close"] - p0["open"])
+    body1 = abs(p1["close"] - p1["open"])
+    return body1 > body0 * 0.9
+
+
+def is_tweezer_top(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> bool:
+    """Pinça de Topo (Tweezer Top): dois topos próximos, sinalizando resistência / reversão baixista."""
+    p0 = _candle_parts(prev_c)
+    p1 = _candle_parts(cur_c)
+    high_diff = abs(p0["high"] - p1["high"])
+    avg_high = (p0["high"] + p1["high"]) / 2.0
+    if avg_high == 0:
+        return False
+    # Topos devem ser próximos (dentro de 0.1% do preço)
+    if high_diff / avg_high > 0.001:
+        return False
+    # Vela prévia deve ser de alta, atual de baixa (confirmação)
+    return p0["close"] > p0["open"] and p1["close"] < p1["open"]
+
+
+def is_tweezer_bottom(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> bool:
+    """Pinça de Fundo (Tweezer Bottom): duas mínimas próximas, sinalizando suporte / reversão altista."""
+    p0 = _candle_parts(prev_c)
+    p1 = _candle_parts(cur_c)
+    low_diff = abs(p0["low"] - p1["low"])
+    avg_low = (p0["low"] + p1["low"]) / 2.0
+    if avg_low == 0:
+        return False
+    if low_diff / avg_low > 0.001:
+        return False
+    return p0["close"] < p0["open"] and p1["close"] > p1["open"]
+
+
+def _candle_engulf_score(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> Tuple[int, Optional[str]]:
+    """Retorna pontuação de padrão Engolfo ou Pinça (0–15 pts) e direção."""
+    if is_engulfing_bullish(prev_c, cur_c):
+        return 15, "call"
+    if is_engulfing_bearish(prev_c, cur_c):
+        return 15, "put"
+    if is_tweezer_bottom(prev_c, cur_c):
+        return 10, "call"
+    if is_tweezer_top(prev_c, cur_c):
+        return 10, "put"
+    return 0, None
+
+
+# =========================
+# CANAL KELTNER (EMA(hlc3) ± RMA(TR)*shift)
+# =========================
+def _rma(values: List[float], period: int) -> List[float]:
+    """Running Moving Average (Wilder smoothing) equivalente ao RMA do Pine Script."""
+    if len(values) < period:
+        return []
+    alpha = 1.0 / period
+    out: List[float] = []
+    first = sum(values[:period]) / period
+    out.append(first)
+    for i in range(period, len(values)):
+        out.append(alpha * values[i] + (1.0 - alpha) * out[-1])
+    return out
+
+
+def keltner_channel(
+    velas: List[Dict[str, Any]], period: int = 20, shift: float = 1.5
+) -> Optional[Tuple[float, float, float]]:
+    """Calcula Canal Keltner: EMA(hlc3, period) ± RMA(TR, period)*shift.
+
+    Returns (upper, middle, lower) ou None se não houver velas suficientes.
+    """
+    if len(velas) < period + 2:
+        return None
+    hlc3 = [
+        (float(v["max"]) + float(v["min"]) + float(v["close"])) / 3.0
+        for v in velas
+    ]
+    trs: List[float] = []
+    for i in range(1, len(velas)):
+        h = float(velas[i]["max"])
+        l = float(velas[i]["min"])
+        pc = float(velas[i - 1]["close"])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+
+    ema_mid = ema_series(hlc3, period)
+    rma_tr = _rma(trs, period)
+
+    if not ema_mid or ema_mid[-1] is None or not rma_tr:
+        return None
+
+    mid = float(ema_mid[-1])
+    offset = float(rma_tr[-1]) * shift
+    return mid + offset, mid, mid - offset
+
+
+def _keltner_score(
+    velas: List[Dict[str, Any]], period: int = 20, shift: float = 1.5
+) -> Tuple[int, Optional[str]]:
+    """Pontua posição do preço em relação ao Canal Keltner (0–20 pts).
+
+    - Preço perto/abaixo da banda inferior → call (zona de reversão altista)
+    - Preço perto/acima da banda superior → put (zona de reversão baixista)
+    """
+    result = keltner_channel(velas, period=period, shift=shift)
+    if result is None:
+        return 0, None
+    upper, mid, lower = result
+    price = float(velas[-2].get("close", velas[-1].get("close", 0)))
+    band_width = max(upper - lower, 1e-12)
+    prox = band_width * 0.25  # mesmo critério do BB_PROXIMITY padrão
+
+    dist_lower = price - lower
+    dist_upper = upper - price
+
+    if dist_lower < 0:        # abaixo da banda inferior
+        return 20, "call"
+    if dist_lower <= prox:
+        frac = max(0.0, 1.0 - dist_lower / max(prox, 1e-12))
+        return int(frac * 20), "call"
+    if dist_upper < 0:        # acima da banda superior
+        return 20, "put"
+    if dist_upper <= prox:
+        frac = max(0.0, 1.0 - dist_upper / max(prox, 1e-12))
+        return int(frac * 20), "put"
+    return 0, None
+
+
+# =========================
+# PIVÔS / FRACTAIS (5 barras — left=2, right=2)
+# =========================
+def pivot_highs(
+    velas: List[Dict[str, Any]], left: int = 2, right: int = 2
+) -> List[Tuple[int, float]]:
+    """Retorna lista de (índice, high) dos pivôs de topo confirmados.
+
+    Um pivô de topo em velas[i] requer:
+      velas[i-left..i-1] e velas[i+1..i+right] com high <= velas[i].high
+    Apenas pivôs já confirmados (i < len-right) são retornados.
+    """
+    result: List[Tuple[int, float]] = []
+    n = len(velas)
+    for i in range(left, n - right):
+        h = float(velas[i].get("max", velas[i].get("high", 0)))
+        if all(float(velas[j].get("max", 0)) <= h for j in range(i - left, i)) and \
+           all(float(velas[j].get("max", 0)) <= h for j in range(i + 1, i + right + 1)):
+            result.append((i, h))
+    return result
+
+
+def pivot_lows(
+    velas: List[Dict[str, Any]], left: int = 2, right: int = 2
+) -> List[Tuple[int, float]]:
+    """Retorna lista de (índice, low) dos pivôs de fundo confirmados."""
+    result: List[Tuple[int, float]] = []
+    n = len(velas)
+    for i in range(left, n - right):
+        l = float(velas[i].get("min", velas[i].get("low", 0)))
+        if all(float(velas[j].get("min", 999999)) >= l for j in range(i - left, i)) and \
+           all(float(velas[j].get("min", 999999)) >= l for j in range(i + 1, i + right + 1)):
+            result.append((i, l))
+    return result
+
+
+def _pivot_proximity(
+    velas: List[Dict[str, Any]],
+    direction: str,
+    left: int = 2,
+    right: int = 2,
+    proximity_pct: float = 0.002,
+) -> Tuple[bool, float]:
+    """Verifica se o preço candidato está perto do último pivô favorável.
+
+    CALL: próximo ao último pivot_low (suporte estrutural) → True
+    PUT:  próximo ao último pivot_high (resistência estrutural) → True
+
+    Returns (is_near, distance_pct)
+    """
+    price = float(velas[-2].get("close", 0))
+    if price == 0:
+        return False, 1.0
+
+    if direction == "call":
+        pts = pivot_lows(velas[:-1], left=left, right=right)
+        if not pts:
+            return False, 1.0
+        _, piv_val = pts[-1]
+        dist_pct = abs(price - piv_val) / max(abs(piv_val), 1e-12)
+        return dist_pct <= proximity_pct, dist_pct
+    else:
+        pts = pivot_highs(velas[:-1], left=left, right=right)
+        if not pts:
+            return False, 1.0
+        _, piv_val = pts[-1]
+        dist_pct = abs(price - piv_val) / max(abs(piv_val), 1e-12)
+        return dist_pct <= proximity_pct, dist_pct
+
+
+# =========================
+# ESTRATÉGIA RESPIRO (Continuação)
+# Lógica: impulso → pullback → gatilho de continuação
+# =========================
+def _detect_respiro(
+    tf_min: int,
+    velas: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Detecta padrão Respiro (impulso + pullback + gatilho de continuação).
+
+    Funciona apenas quando ENTRY_MODE da TF é 'continuation'.
+    Parâmetros são lidos dos globals RESPIRO_* por TF.
+
+    Returns dict de sinal (mesmo formato de check_patterns) ou None.
+    """
+    is_m5 = (tf_min == 5)
+    respiro_enable = RESPIRO_ENABLE_M5 if is_m5 else RESPIRO_ENABLE_M1
+    if not respiro_enable:
+        return None
+
+    impulse_lb = RESPIRO_IMPULSE_LOOKBACK_M5 if is_m5 else RESPIRO_IMPULSE_LOOKBACK_M1
+    min_impulse = RESPIRO_MIN_IMPULSE_M5 if is_m5 else RESPIRO_MIN_IMPULSE_M1
+    pb_max_frac = RESPIRO_PULLBACK_MAX_FRAC_M5 if is_m5 else RESPIRO_PULLBACK_MAX_FRAC_M1
+    max_pb_candles = RESPIRO_MAX_PULLBACK_CANDLES_M5 if is_m5 else RESPIRO_MAX_PULLBACK_CANDLES_M1
+
+    min_velas = impulse_lb + max_pb_candles + 3
+    if len(velas) < min_velas:
+        return None
+
+    period = tf_min * 60
+    c_last = velas[-2]          # candidata (última fechada)
+    pattern_from = int(c_last.get("from", 0))
+    expected_confirm_from = pattern_from + period
+
+    # --- Detectar impulso (últimas impulse_lb velas antes do pullback) ---
+    # Janela de análise: exclui vela candidata e última vela em aberto
+    analysis_window = velas[-(impulse_lb + max_pb_candles + 2):-1]
+    if len(analysis_window) < impulse_lb + 1:
+        return None
+
+    closes = [float(v["close"]) for v in analysis_window]
+    highs  = [float(v.get("max", v.get("high", 0))) for v in analysis_window]
+    lows   = [float(v.get("min", v.get("low", 0))) for v in analysis_window]
+
+    # Detectar pernada de alta: impulse_lb velas de alta dominante
+    # Testamos ambas as direções
+    for direction in ("call", "put"):
+        # Pernada: análise das primeiras impulse_lb velas da janela
+        imp_window_closes = closes[:impulse_lb + 1]
+        imp_start = imp_window_closes[0]
+        imp_end   = imp_window_closes[-1]
+        base = abs(imp_start) if abs(imp_start) > 1e-10 else 1e-12
+        imp_move = (imp_end - imp_start) / base
+
+        if direction == "call" and imp_move < min_impulse:
+            continue
+        if direction == "put" and imp_move > -min_impulse:
+            continue
+
+        # Pullback: velas após a pernada (restante da janela + vela candidata)
+        pb_window = analysis_window[impulse_lb:]
+        if not pb_window:
+            continue
+
+        pb_closes = [float(v["close"]) for v in pb_window]
+        if direction == "call":
+            # Pullback de baixa após impulso de alta
+            pb_ok = all(pb_closes[i] <= pb_closes[i-1] or True for i in range(1, len(pb_closes)))
+            pb_retrace = (imp_end - pb_closes[-1]) / max(abs(imp_move * abs(imp_start)), 1e-12)
+            if pb_retrace > pb_max_frac or pb_retrace < 0.05:
+                continue   # pullback inexistente ou muito profundo
+            # Gatilho de CALL: vela candidata fecha acima do máximo do pullback
+            pb_high = max(highs[impulse_lb:])
+            trigger_price = float(c_last.get("close", 0))
+            if trigger_price <= pb_high:
+                continue
+        else:
+            # Pullback de alta após impulso de baixa
+            pb_ok = all(pb_closes[i] >= pb_closes[i-1] or True for i in range(1, len(pb_closes)))
+            pb_retrace = (pb_closes[-1] - imp_end) / max(abs(imp_move * abs(imp_start)), 1e-12)
+            if pb_retrace > pb_max_frac or pb_retrace < 0.05:
+                continue
+            # Gatilho de PUT: vela candidata fecha abaixo da mínima do pullback
+            pb_low = min(lows[impulse_lb:])
+            trigger_price = float(c_last.get("close", 0))
+            if trigger_price >= pb_low:
+                continue
+
+        # Sinal detectado
+        v15_score_min = V15_SCORE_MIN_M5 if is_m5 else V15_SCORE_MIN_M1
+        return {
+            "pattern_name": f"Respiro_{'CALL' if direction == 'call' else 'PUT'}",
+            "direction_hint": direction,
+            "requires_confirmation": True,
+            "pattern_from": pattern_from,
+            "expected_confirm_from": expected_confirm_from,
+            "v15_score": v15_score_min,   # score artificial para compatibilidade
+            "v15_confirm_count": 0,
+            "pattern_mode": "respiro",
+            "strategy": "respiro",
+            "rsi_pts": 0, "bb_pts": 0, "wick_pts": 0, "imp_pts": 0,
+            "keltner_pts": 0, "engulf_pts": 0,
+            "call_score": v15_score_min if direction == "call" else 0,
+            "put_score": v15_score_min if direction == "put" else 0,
+            "pivot_prox": "",
+        }
+
+    return None
+
+
+# =========================
 # MOTOR DE REVERSÃO V15
 # Score/contexto/sustentação, impulso, wick, RSI, BB.
 # Substitui completamente a detecção e confirmação reversal da v14.
 # Padrões breakout/harami/hammer preservados como fallback.
 # =========================
 
-# --- Parâmetros fixos do motor V15 (bloco centralizado, não dispersar) ---
-# Estratégia: PRIORIDADE DIGITAL — perfil livre (mais entradas, qualidade mantida)
-# ← AJUSTE: aumente V15_SCORE_MIN para mais seletividade (ex.: 72, 76, 80)
-V15_SCORE_MIN = 55           # Score mínimo para sinal reversal V15 (0–100); 68 = mais entradas
-V15_SCORE_GAP_MIN = 1        # ← AJUSTE: diferença mínima call/put (3 = aceita empates técnicos leves)
-V15_CONFIRM_POLLS = 1        # Polls de confirmação necessários (1 = entrada imediata, mais timing)
+# --- Parâmetros V15 (defaults; sobrescritos por _load_from_config via config.txt [M1]/[M5]) ---
+V15_SCORE_MIN = 55           # Score mínimo para sinal reversal V15 (0–100)
+V15_SCORE_GAP_MIN = 1        # Diferença mínima call/put
+V15_CONFIRM_POLLS = 1        # Polls de confirmação necessários
 V15_RSI_PERIOD = 14          # Período RSI
 V15_RSI_OVERSOLD = 30        # RSI abaixo deste valor = oversold → sinal call
 V15_RSI_OVERBOUGHT = 70      # RSI acima deste valor = overbought → sinal put
 V15_BB_PERIOD = 20           # Período Bollinger Bands
 V15_BB_STD = 2.0             # Multiplicador de desvio padrão para BB
-V15_BB_PROXIMITY = 0.25      # Fração da largura da banda para considerar "próximo do extremo" (mais permissivo)
-V15_IMPULSE_LOOKBACK = 5     # Número de velas para cálculo de impulso (tendência recente)
+V15_BB_PROXIMITY = 0.25      # Fração da largura da banda para "próximo do extremo"
+V15_IMPULSE_LOOKBACK = 5     # Número de velas para cálculo de impulso
 V15_CONTEXT_LOOKBACK = 12    # Número de velas para contexto de tendência prévia
 V15_WICK_RATIO = 0.45        # Wick mínimo (wick/range) para pontuar sombra longa
 V15_CANDLES_NEEDED = 40      # Mínimo de velas para o motor V15 funcionar
-# Thresholds internos do motor (ajustáveis para calibração fina)
-V15_TREND_THRESHOLD = 0.0008   # Variação mínima relativa para considerar tendência (não sideways)
-V15_IMPULSE_THRESHOLD = 0.0006 # Variação mínima relativa de impulso para pontuar contexto (mais sensível)
-V15_IMPULSE_MULTIPLIER = 8000  # Fator de escala: impulso*fator → pontos (capado em 25)
-V15_WICK_SCORE_MAX = 25        # Pontuação máxima por componente wick
-V15_WICK_SCORE_FACTOR = 35     # Fator multiplicador: wick_ratio*fator → pontos brutos
-# Fallback condicional M1: permite Harami/Hammer no M1 somente se o V15 estiver
-# "quase passando" (score próximo do mínimo + contexto estrutural OK).
-# Evita fallback puro sem contexto V15. Ajuste a critério: 55 = ~72% do mínimo.
-V15_FALLBACK_NEAR_SCORE_M1 = 38  # Score mínimo para ativar fallback Harami/Hammer no M1
+V15_TREND_THRESHOLD = 0.0008
+V15_IMPULSE_THRESHOLD = 0.0006
+V15_IMPULSE_MULTIPLIER = 8000
+V15_WICK_SCORE_MAX = 25
+V15_WICK_SCORE_FACTOR = 35
+V15_FALLBACK_NEAR_SCORE_M1 = 38
 
 # =========================
 # FILTRO ESTRUTURAL M5 (v15.1)
@@ -1188,30 +1784,43 @@ def _v15_wick_score(c: Dict[str, Any]) -> Tuple[int, Optional[str]]:
 
 def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """
-    MOTOR DE REVERSÃO V15
-    ─────────────────────
-    Detecta sinais de reversão por score composto (máximo 100 pontos):
-      • RSI         (0–25 pts): oversold/overbought indica exaustão da tendência
+    MOTOR DE REVERSÃO V15 (+ Respiro como modo alternativo)
+    ─────────────────────────────────────────────────────────
+    Reversal mode detecta sinais por score composto (máximo ~145 pontos):
+      • RSI         (0–25 pts): oversold/overbought indica exaustão
       • BB          (0–25 pts): preço próximo das bandas extremas
       • Wick        (0–25 pts): sombra longa indica rejeição de preço
       • Impulso+Ctx (0–25 pts): tendência prévia confirma contexto reversal
+      • Keltner     (0–20 pts): bônus quando preço toca extremo do canal Keltner
+      • Engolfo/Pinça (0–15 pts): bônus por padrão de vela confirmatório
 
-    Sinal disparado quando score >= V15_SCORE_MIN E a diferença entre
-    call_score e put_score >= V15_SCORE_GAP_MIN (evita empates técnicos).
+    Continuation mode (respiro) delega para _detect_respiro().
 
-    Fallback v14: Harami Bearish/Bullish e Hammer preservados para
-    casos onde o motor V15 não atinge pontuação mínima.
-    No M1, fallback também exige aprovação no filtro estrutural leve.
-
-    O sinal retornado inclui os componentes de score (rsi_pts, bb_pts,
-    wick_pts, imp_pts, call_score, put_score) para registro em PATTERNS_CSV.
+    Sinal disparado quando score >= V15_SCORE_MIN_M{tf_min} E gap >= V15_SCORE_GAP_MIN_M{tf_min}.
     """
     if not velas or len(velas) < max(V15_CANDLES_NEEDED, 6):
         return None
 
+    # --- Seleciona parâmetros por TF ---
+    is_m5 = (tf_min == 5)
+    v15_score_min   = V15_SCORE_MIN_M5   if is_m5 else V15_SCORE_MIN_M1
+    v15_gap_min     = V15_SCORE_GAP_MIN_M5 if is_m5 else V15_SCORE_GAP_MIN_M1
+    entry_mode_tf   = ENTRY_MODE_M5      if is_m5 else ENTRY_MODE_M1
+    keltner_enable  = KELTNER_ENABLE_M5  if is_m5 else KELTNER_ENABLE_M1
+    keltner_period  = KELTNER_PERIOD_M5  if is_m5 else KELTNER_PERIOD_M1
+    keltner_shift   = KELTNER_SHIFT_M5   if is_m5 else KELTNER_SHIFT_M1
+    pivot_enable    = PIVOT_ENABLE_M5    if is_m5 else PIVOT_ENABLE_M1
+    pivot_left      = PIVOT_LEFT_M5      if is_m5 else PIVOT_LEFT_M1
+    pivot_right     = PIVOT_RIGHT_M5     if is_m5 else PIVOT_RIGHT_M1
+    pivot_prox_pct  = PIVOT_PROXIMITY_PCT_M5 if is_m5 else PIVOT_PROXIMITY_PCT_M1
+
+    # --- Modo Continuação (Respiro) ---
+    if entry_mode_tf == "continuation":
+        return _detect_respiro(tf_min, velas)
+
     period = tf_min * 60
     c_last = velas[-2]   # vela candidata (penúltima, já fechada)
-    c_prev = velas[-3]   # vela anterior (para fallback harami)
+    c_prev = velas[-3]   # vela anterior (para fallback harami/engolfo/pinça)
     pattern_from = int(c_last.get("from", 0))
     expected_confirm_from = pattern_from + period
     closes = [float(v["close"]) for v in velas]
@@ -1245,21 +1854,17 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             frac = max(0.0, 1.0 - dist_lower / max(prox_thr, 1e-12))
             bb_pts, bb_dir = int(frac * 25), "call"
         elif dist_lower < 0:
-            # Preço abaixo da banda inferior: máximos pontos call
             bb_pts, bb_dir = 25, "call"
         elif dist_upper <= prox_thr and dist_upper >= 0:
             frac = max(0.0, 1.0 - dist_upper / max(prox_thr, 1e-12))
             bb_pts, bb_dir = int(frac * 25), "put"
         elif dist_upper < 0:
-            # Preço acima da banda superior: máximos pontos put
             bb_pts, bb_dir = 25, "put"
 
     # ── Componente Wick (0–25 pts) ─────────────────────────────────────────
     wick_pts, wick_dir = _v15_wick_score(c_last)
 
     # ── Componente Impulso + Contexto (0–25 pts) ───────────────────────────
-    # Tendência prévia de queda + impulso negativo → contexto para call (reversão)
-    # Tendência prévia de alta + impulso positivo → contexto para put (reversão)
     impulse = _v15_impulse(velas, V15_IMPULSE_LOOKBACK)
     context = _v15_context(velas, V15_CONTEXT_LOOKBACK)
     imp_pts = 0
@@ -1272,35 +1877,59 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             imp_pts = int(min(V15_WICK_SCORE_MAX, abs(impulse) * V15_IMPULSE_MULTIPLIER))
             imp_dir = "put"
 
-    # ── Soma de scores por direção ─────────────────────────────────────────
-    call_score = (rsi_pts if rsi_dir == "call" else 0) + \
-                 (bb_pts if bb_dir == "call" else 0) + \
-                 (wick_pts if wick_dir == "call" else 0) + \
-                 (imp_pts if imp_dir == "call" else 0)
-    put_score  = (rsi_pts if rsi_dir == "put" else 0) + \
-                 (bb_pts if bb_dir == "put" else 0) + \
-                 (wick_pts if wick_dir == "put" else 0) + \
-                 (imp_pts if imp_dir == "put" else 0)
+    # ── Componente Keltner (0–20 pts) bônus ─────────────────────────────────
+    keltner_pts = 0
+    keltner_dir: Optional[str] = None
+    if keltner_enable:
+        keltner_pts, keltner_dir = _keltner_score(velas, period=keltner_period, shift=keltner_shift)
 
-    # Componentes de score compartilhados por todos os retornos (para log enriquecido)
+    # ── Componente Engolfo/Pinça (0–15 pts) bônus ────────────────────────────
+    engulf_pts = 0
+    engulf_dir: Optional[str] = None
+    if len(velas) >= 3:
+        engulf_pts, engulf_dir = _candle_engulf_score(c_prev, c_last)
+
+    # ── Soma de scores por direção ─────────────────────────────────────────
+    call_score = (rsi_pts    if rsi_dir    == "call" else 0) + \
+                 (bb_pts     if bb_dir     == "call" else 0) + \
+                 (wick_pts   if wick_dir   == "call" else 0) + \
+                 (imp_pts    if imp_dir    == "call" else 0) + \
+                 (keltner_pts if keltner_dir == "call" else 0) + \
+                 (engulf_pts if engulf_dir == "call" else 0)
+    put_score  = (rsi_pts    if rsi_dir    == "put" else 0) + \
+                 (bb_pts     if bb_dir     == "put" else 0) + \
+                 (wick_pts   if wick_dir   == "put" else 0) + \
+                 (imp_pts    if imp_dir    == "put" else 0) + \
+                 (keltner_pts if keltner_dir == "put" else 0) + \
+                 (engulf_pts if engulf_dir == "put" else 0)
+
+    # Pivô: verificar proximidade para log e uso como contexto estrutural
+    pivot_prox_str = ""
+    if pivot_enable and len(velas) >= (pivot_left + pivot_right + 3):
+        _best_dir = "call" if call_score >= put_score else "put"
+        _near, _dist_pct = _pivot_proximity(velas, _best_dir,
+                                             left=pivot_left, right=pivot_right,
+                                             proximity_pct=pivot_prox_pct)
+        pivot_prox_str = f"{_dist_pct:.5f}"
+
+    # Componentes de score compartilhados por todos os retornos
     _score_components = {
         "rsi_pts": rsi_pts,
         "bb_pts": bb_pts,
         "wick_pts": wick_pts,
         "imp_pts": imp_pts,
+        "keltner_pts": keltner_pts,
+        "engulf_pts": engulf_pts,
         "call_score": call_score,
         "put_score": put_score,
+        "strategy": "v15",
+        "pivot_prox": pivot_prox_str,
     }
 
     # ── Disparo do sinal V15 ───────────────────────────────────────────────
-    # Exige score mínimo E vantagem mínima sobre a direção oposta (score_gap_min)
-    if call_score >= V15_SCORE_MIN and (call_score - put_score) >= V15_SCORE_GAP_MIN:
-        # ── Filtro estrutural M5 (v15.1): só aceita sinal no extremo do range ──
-        # Aplicado exclusivamente no M5 para evitar reversão no meio do range.
+    if call_score >= v15_score_min and (call_score - put_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("call", velas):
             return None
-        # ── Filtro estrutural M1 (v15.2): só aceita sinal no 1/3 inferior ──
-        # Garante que sinal de CALL no M1 esteja na zona de suporte estrutural.
         elif tf_min == 1 and not _m1_structural_filter("call", velas):
             return None
         return {
@@ -1314,12 +1943,9 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             "pattern_mode": "v15",
             **_score_components,
         }
-    if put_score >= V15_SCORE_MIN and (put_score - call_score) >= V15_SCORE_GAP_MIN:
-        # ── Filtro estrutural M5 (v15.1): só aceita sinal no extremo do range ──
+    if put_score >= v15_score_min and (put_score - call_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("put", velas):
             return None
-        # ── Filtro estrutural M1 (v15.2): só aceita sinal no 1/3 superior ──
-        # Garante que sinal de PUT no M1 esteja na zona de resistência estrutural.
         elif tf_min == 1 and not _m1_structural_filter("put", velas):
             return None
         return {
@@ -1334,44 +1960,45 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             **_score_components,
         }
 
-    # ── Fallback v14: Harami Bearish / Bullish / Hammer ───────────────────
-    # No M5: fallback puro sem filtro adicional.
-    # No M1: fallback condicional — só ativo se V15 "quase passou" (quase-score)
-    #         e estrutura OK. Evita entradas sem contexto reversal mínimo.
+    # ── Fallback v14: Harami / Hammer / Engolfo / Pinça ───────────────────
     _best_score = max(call_score, put_score)
     _fallback_m1_ok = (tf_min != 1) or (_best_score >= V15_FALLBACK_NEAR_SCORE_M1)
 
-    if is_harami_bearish(c_prev, c_last):
+    _score_components_fb = {**_score_components, "pattern_mode": "fallback", "strategy": "fallback"}
+
+    if is_harami_bearish(c_prev, c_last) or is_engulfing_bearish(c_prev, c_last) or is_tweezer_top(c_prev, c_last):
         if not _fallback_m1_ok:
             return None
         if tf_min == 1 and not _m1_structural_filter("put", velas):
             return None
+        pat = "HaramiBearish" if is_harami_bearish(c_prev, c_last) else \
+              ("EngolfoBearish" if is_engulfing_bearish(c_prev, c_last) else "TweezerTop")
         return {
-            "pattern_name": "HaramiBearish",
+            "pattern_name": pat,
             "direction_hint": "put",
             "requires_confirmation": True,
             "pattern_from": pattern_from,
             "expected_confirm_from": expected_confirm_from,
             "v15_score": 0,
             "v15_confirm_count": 0,
-            "pattern_mode": "fallback",
-            **_score_components,
+            **_score_components_fb,
         }
-    if is_harami_bullish(c_prev, c_last):
+    if is_harami_bullish(c_prev, c_last) or is_engulfing_bullish(c_prev, c_last) or is_tweezer_bottom(c_prev, c_last):
         if not _fallback_m1_ok:
             return None
         if tf_min == 1 and not _m1_structural_filter("call", velas):
             return None
+        pat = "HaramiBullish" if is_harami_bullish(c_prev, c_last) else \
+              ("EngolfoBullish" if is_engulfing_bullish(c_prev, c_last) else "TweezerBottom")
         return {
-            "pattern_name": "HaramiBullish",
+            "pattern_name": pat,
             "direction_hint": "call",
             "requires_confirmation": True,
             "pattern_from": pattern_from,
             "expected_confirm_from": expected_confirm_from,
             "v15_score": 0,
             "v15_confirm_count": 0,
-            "pattern_mode": "fallback",
-            **_score_components,
+            **_score_components_fb,
         }
     if is_hammer(c_last):
         if not _fallback_m1_ok:
@@ -1386,8 +2013,7 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             "expected_confirm_from": expected_confirm_from,
             "v15_score": 0,
             "v15_confirm_count": 0,
-            "pattern_mode": "fallback",
-            **_score_components,
+            **_score_components_fb,
         }
 
     return None
@@ -1465,38 +2091,59 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
             confirmed_now = (direction_hint == "call" and c_price > p_ref) or \
                             (direction_hint == "put" and c_price < p_ref)
 
+        confirm_polls_needed = V15_CONFIRM_POLLS_M5 if tf_min == 5 else V15_CONFIRM_POLLS_M1
         if confirmed_now:
-            # Incrementa contador de polls confirmados consecutivos
             pending["v15_confirm_count"] = pending.get("v15_confirm_count", 0) + 1
-            if pending["v15_confirm_count"] >= V15_CONFIRM_POLLS:
+            if pending["v15_confirm_count"] >= confirm_polls_needed:
                 return "confirmed", direction_hint
             return "waiting", None
         else:
-            # Poll falhou: reseta contador de sustentação
             pending["v15_confirm_count"] = 0
-            # Se passou 1 período inteiro após o esperado sem confirmar, rejeita
             if now_server >= expected_confirm_from + period:
                 return "rejected", None
             return "waiting", None
 
-    # ─── Confirmação fallback v14: harami/hammer (lógica aprimorada) ─────
-    # Usa 40% do range como referência em vez do ponto médio (50%),
-    # tornando a confirmação ligeiramente mais permissiva sem perder o critério direcional.
+    # ─── Confirmação Respiro: mesma lógica de sustentação do V15 ──────────
+    if pattern_mode == "respiro":
+        if now_server < expected_confirm_from:
+            return "waiting", None
+        p_ref = float(c_pattern.get("close", 0))
+        if p_ref == 0:
+            return "error", None
+        c_confirm = velas[-1] if velas else None
+        if c_confirm is None:
+            return "waiting", None
+        c_price = float(c_confirm.get("close", c_confirm.get("open", p_ref)))
+        confirmed_now = (direction_hint == "call" and c_price > p_ref) or \
+                        (direction_hint == "put" and c_price < p_ref)
+        confirm_polls_needed = RESPIRO_CONFIRM_POLLS_M5 if tf_min == 5 else RESPIRO_CONFIRM_POLLS_M1
+        if confirmed_now:
+            pending["v15_confirm_count"] = pending.get("v15_confirm_count", 0) + 1
+            if pending["v15_confirm_count"] >= confirm_polls_needed:
+                return "confirmed", direction_hint
+            return "waiting", None
+        else:
+            pending["v15_confirm_count"] = 0
+            if now_server >= expected_confirm_from + period:
+                return "rejected", None
+            return "waiting", None
+
+    # ─── Confirmação fallback v14: harami/hammer/engolfo/pinça ───────────
     c_next = _find_candle_by_from(velas, expected_confirm_from)
     if c_next is None:
         return "waiting", None
 
     patt = pending["pattern_name"]
     rng = float(c_pattern["max"]) - float(c_pattern["min"])
-    bull_level = float(c_pattern["min"]) + (rng * 0.40)   # 40% do range a partir da mínima
-    bear_level = float(c_pattern["max"]) - (rng * 0.40)   # 40% do range a partir da máxima
+    bull_level = float(c_pattern["min"]) + (rng * 0.40)
+    bear_level = float(c_pattern["max"]) - (rng * 0.40)
     if patt == "Hammer":
         ok = float(c_next["close"]) > float(c_pattern["max"])
         return ("confirmed" if ok else "rejected"), ("call" if ok else None)
-    if patt == "HaramiBullish":
+    if patt in ("HaramiBullish", "EngolfoBullish", "TweezerBottom"):
         ok = (float(c_next["close"]) > float(c_next["open"])) and (float(c_next["close"]) > bull_level)
         return ("confirmed" if ok else "rejected"), ("call" if ok else None)
-    if patt == "HaramiBearish":
+    if patt in ("HaramiBearish", "EngolfoBearish", "TweezerTop"):
         ok = (float(c_next["close"]) < float(c_next["open"])) and (float(c_next["close"]) < bear_level)
         return ("confirmed" if ok else "rejected"), ("put" if ok else None)
     return "error", None
@@ -2154,15 +2801,20 @@ def ask_entry_mode():
     print("\n" + "=" * 70)
     print("🧠 MODO DE ENTRADA")
     print("=" * 70)
-    print("  1) REVERSÃO  ✅ (único modo disponível nesta versão)")
-    print("  2) ROMPIMENTO  🚧 (em desenvolvimento — indisponível)")
+    print("  1) REVERSÃO     ✅ Motor V15 (RSI+BB+Wick+Keltner — padrão)")
+    print("  2) CONTINUAÇÃO  ✅ Respiro (impulso → pullback → entrada na continuação)")
+    print()
+    print("  Nota: o modo padrão também pode ser definido em config.txt")
+    print("        em [M1].entry_mode / [M5].entry_mode")
     while True:
-        r = input("\n👉 Pressione Enter para continuar com REVERSÃO: ").strip() or "1"
+        r = input("\n👉 Digite 1 ou 2 [1]: ").strip() or "1"
         if r == "1":
             return "reversal"
         if r == "2":
-            print("⚠️  O modo ROMPIMENTO ainda não está disponível. Selecione 1 para REVERSÃO.")
-            continue
+            print("  ℹ️  Modo CONTINUAÇÃO (Respiro) selecionado.")
+            print("     Ative também respiro_enable = true no config.txt [M1]/[M5].")
+            return "continuation"
+        print("❌ Opção inválida! Digite 1 ou 2.")
 
 
 def ask_rigidez():
@@ -3198,6 +3850,9 @@ if __name__ == '__main__':
     _mkdirp(STATE_DIR)
     _mkdirp(PRESETS_DIR)
 
+    # Carregar parâmetros do config.txt (sobrescreve defaults hardcoded)
+    _load_from_config()
+
     connect()
 
     print("\n" + "=" * 70)
@@ -3224,6 +3879,21 @@ if __name__ == '__main__':
     use_otc = ask_market_type()
     market_label = "OTC" if use_otc else "Mercado Aberto"
 
+    # ─── RESTRIÇÃO DE SEGURANÇA: OTC bloqueado em conta REAL ──────────────
+    if conta == 'REAL' and use_otc and not ALLOW_OTC_LIVE:
+        print("\n" + "=" * 70)
+        print("🚫 ATENÇÃO — OPERAÇÃO BLOQUEADA POR SEGURANÇA")
+        print("=" * 70)
+        print("  Conta REAL + OTC está DESATIVADO nesta configuração.")
+        print("  Operações ao vivo em conta real são permitidas somente em")
+        print("  Mercado Aberto (ativos -OP), não em OTC.")
+        print()
+        print("  Para alterar esse comportamento, edite config.txt:")
+        print("    [MARKET]")
+        print("    allow_otc_live = true   ← (não recomendado)")
+        print("=" * 70)
+        sys.exit(1)
+
     # Número de ativos simultâneos
     max_ativos = ask_num_assets()
 
@@ -3239,10 +3909,14 @@ if __name__ == '__main__':
     # Temporizador de finalização automática
     run_minutes = ask_run_duration()
 
-    # Modo fixo: REVERSÃO
-    ENTRY_MODE = "reversal"
+    # Modo de entrada (reversal / continuation)
+    # O menu permite escolher; os per-TF defaults foram carregados de config.txt
+    ENTRY_MODE = ask_entry_mode()
+    # Aplica modo selecionado para ambas as TFs (pode ser sobrescrito por config)
+    ENTRY_MODE_M1 = ENTRY_MODE
+    ENTRY_MODE_M5 = ENTRY_MODE
 
-    # Estratégia única: PRIORIDADE DIGITAL — parâmetros ajustáveis no topo do script
+    # Estratégia única: PRIORIDADE DIGITAL
     RIGIDEZ_MODE = "normal"
     _apply_rigidez()
 
@@ -3277,7 +3951,10 @@ if __name__ == '__main__':
         print(f'👤 Usuário: {nome}')
     print(f'InstanceTag: {INSTANCE_TAG}')
     print(f'Conta: {"DEMO" if conta == "PRACTICE" else "REAL"} | Mercado: {market_label}')
-    print(f'Timeframe: M{TIMEFRAME_MINUTES} | Modo: REVERSÃO | Carteira: Ativos.txt')
+    otc_live_status = "permitido" if ALLOW_OTC_LIVE else "BLOQUEADO (somente demo)"
+    print(f'OTC em conta real: {otc_live_status}')
+    modo_label = "REVERSÃO (V15)" if ENTRY_MODE == "reversal" else "CONTINUAÇÃO (Respiro)"
+    print(f'Timeframe: M{TIMEFRAME_MINUTES} | Modo: {modo_label} | Carteira: Ativos.txt')
     print(f'Prioridade: [DIGITAL M{TIMEFRAME_MINUTES}] → [BINARIA M{TIMEFRAME_MINUTES}] (fallback apenas se faltar digital aberta)')
     print(f'Ativos: {len(ativos_lista)}/{max_ativos}')
     print('Ativos selecionados:')
@@ -3292,9 +3969,18 @@ if __name__ == '__main__':
     timer_label = f"{run_minutes} min" if run_minutes > 0 else "ilimitado"
     entries_label = str(MAX_ENTRIES) if MAX_ENTRIES > 0 else "ilimitado"
     print(f'Temporizador: {timer_label} | Entradas máx: {entries_label}')
-    print(f'V15_SCORE_MIN={V15_SCORE_MIN} | V15_SCORE_GAP_MIN={V15_SCORE_GAP_MIN} | V15_CONFIRM_POLLS={V15_CONFIRM_POLLS}')
-    print(f'ADX_M1={ADX_MIN_M1:.1f} | BB_M1={BB_WIDTH_MIN_M1:.5f} | SLOPE_M1={SLOPE_MIN_M1:.5f}')
-    print(f'ENTRY_WINDOW_M1={ENTRY_WINDOW_SECONDS_M1}s | ATR_MIN_M1={ATR_MIN_RATIO_ABS_M1:.6f}')
+    _sm1 = V15_SCORE_MIN_M1
+    _sm5 = V15_SCORE_MIN_M5
+    print(f'V15_SCORE_MIN: M1={_sm1} M5={_sm5} | V15_CONFIRM_POLLS: M1={V15_CONFIRM_POLLS_M1} M5={V15_CONFIRM_POLLS_M5}')
+    print(f'ADX_M1={ADX_MIN_M1:.1f} ADX_M5={ADX_MIN_M5:.1f} | BB_M1={BB_WIDTH_MIN_M1:.5f} BB_M5={BB_WIDTH_MIN_M5:.5f}')
+    print(f'ENTRY_WINDOW: M1={ENTRY_WINDOW_SECONDS_M1}s M5={ENTRY_WINDOW_SECONDS_M5}s')
+    _ke_m1 = "on" if KELTNER_ENABLE_M1 else "off"
+    _ke_m5 = "on" if KELTNER_ENABLE_M5 else "off"
+    _pe_m1 = "on" if PIVOT_ENABLE_M1 else "off"
+    _pe_m5 = "on" if PIVOT_ENABLE_M5 else "off"
+    _re_m1 = "on" if RESPIRO_ENABLE_M1 else "off"
+    _re_m5 = "on" if RESPIRO_ENABLE_M5 else "off"
+    print(f'Keltner: M1={_ke_m1} M5={_ke_m5} | Pivot: M1={_pe_m1} M5={_pe_m5} | Respiro: M1={_re_m1} M5={_re_m5}')
     print(f'Logs: {LOG_DIR.as_posix()}/ | State: {STATE_DIR.as_posix()}/')
     print('=' * 70)
     print('\n🚀 Iniciando...\n')

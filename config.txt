@@ -1,0 +1,215 @@
+# =============================================================================
+#  BOT DINVELAS M1/M5 — Arquivo de Configuração
+#  Edite este arquivo para ajustar todos os parâmetros de estratégia sem
+#  modificar o código-fonte. Defaults foram escolhidos para manter o
+#  comportamento original do bot quando as novas seções não existem.
+# =============================================================================
+
+[LOGIN]
+email = seu@email.com
+senha = suasenha
+
+[AJUSTES]
+# Tipo padrão de operação: digital ou binarias
+tipo = digital
+# Buffer de tempo (s) antes do fim da vela para aceitar compra
+purchase_buffer_seconds = 1
+
+# =============================================================================
+[MARKET]
+# =============================================================================
+# SEGURANÇA: impede operações ao vivo em OTC quando a conta for REAL.
+# true  = bloquear OTC em conta real  (recomendado — opera somente mercado aberto)
+# false = permitir OTC em conta real  (apenas para testes em DEMO)
+allow_otc_live = false
+
+# =============================================================================
+[SLEEP]
+# =============================================================================
+idle_sleep_m1    = 0.20
+idle_sleep_m5    = 1.50
+pending_sleep_m1 = 0.25
+pending_sleep_m5 = 1.10
+
+# =============================================================================
+[RISK]
+# =============================================================================
+# Modo de valor por operação: fixed (fixo) ou percent (percentual do saldo)
+amount_mode         = fixed
+amount_fixed        = 1.0
+amount_percent      = 1.0
+# true = recalcular percentual a cada operação; false = fixar no início
+amount_recalc_each  = true
+amount_min          = 0.01
+# Stop Loss/Win em % do saldo inicial (0 = desativado)
+stop_loss_pct       = 0.0
+stop_win_pct        = 0.0
+# Número máximo de entradas aceitas (0 = ilimitado)
+max_entries         = 0
+
+# =============================================================================
+[M1]
+# =============================================================================
+# Parâmetros exclusivos para o timeframe M1 (1 minuto).
+# Cada parâmetro aqui sobrescreve o default hardcoded do código.
+
+# --- Modo de entrada ---
+# reversal    : Motor V15 (reversão por score RSI+BB+Wick+Impulso)
+# continuation: Estratégia Respiro (impulso → pullback → continuação)
+entry_mode = reversal
+
+# --- Filtros de Regime ---
+enable_atr_filter   = true
+atr_period          = 14
+atr_adaptive_window = 30
+atr_adaptive_factor = 0.45
+atr_max_thr         = 0.00014
+atr_min_ratio       = 0.000002
+
+enable_trend_filter = true
+adx_period          = 14
+adx_min             = 3
+bb_period           = 20
+bb_std              = 2.0
+bb_width_min        = 0.00003
+slope_lookback      = 8
+slope_min           = 0.000003
+
+# Janela de entrada (segundos a partir do início da vela)
+entry_window_seconds = 30
+
+# --- Motor de Reversão V15 ---
+v15_score_min           = 55
+v15_score_gap_min       = 1
+v15_confirm_polls       = 1
+v15_rsi_period          = 14
+v15_rsi_oversold        = 30
+v15_rsi_overbought      = 70
+v15_bb_period           = 20
+v15_bb_std              = 2.0
+v15_bb_proximity        = 0.25
+v15_impulse_lookback    = 5
+v15_context_lookback    = 12
+v15_wick_ratio          = 0.45
+v15_candles_needed      = 40
+v15_trend_threshold     = 0.0008
+v15_impulse_threshold   = 0.0006
+v15_impulse_multiplier  = 8000
+v15_wick_score_max      = 25
+v15_wick_score_factor   = 35
+v15_fallback_near_score = 38
+
+# Filtro estrutural M1 (janela de micro-range)
+m1_structural_candles = 5
+
+# --- Canal Keltner (EMA(hlc3) ± RMA(TR)*shift) ---
+# Componente adicional de score: pontua quando preço toca extremo do canal.
+keltner_enable = true
+keltner_period = 20
+keltner_shift  = 1.5
+
+# --- Pivôs / Fractais (5 barras, left=2, right=2) ---
+# Define topos/fundos estruturais de mercado para filtros e reforço de sinal.
+pivot_enable          = true
+pivot_left            = 2
+pivot_right           = 2
+# Proximidade máxima do pivô para considerar "na zona" (fração do preço)
+pivot_proximity_pct   = 0.002
+
+# --- Estratégia Respiro (continuação) ---
+# Só usada quando entry_mode = continuation
+respiro_enable               = false
+respiro_impulse_lookback     = 5
+respiro_min_impulse          = 0.0010
+respiro_pullback_max_frac    = 0.618
+respiro_max_pullback_candles = 3
+# Gatilho: close_over_high (CALL) / close_under_low (PUT)
+respiro_trigger              = close_over_high
+respiro_confirm_polls        = 1
+
+# =============================================================================
+[M5]
+# =============================================================================
+# Parâmetros exclusivos para o timeframe M5 (5 minutos).
+
+# --- Modo de entrada ---
+entry_mode = reversal
+
+# --- Filtros de Regime ---
+enable_atr_filter   = true
+atr_period          = 14
+atr_adaptive_window = 30
+atr_adaptive_factor = 0.45
+atr_max_thr         = 0.00100
+atr_min_ratio       = 0.000020
+
+enable_trend_filter = true
+adx_period          = 14
+adx_min             = 18.0
+bb_period           = 20
+bb_std              = 2.0
+bb_width_min        = 0.00070
+slope_lookback      = 8
+slope_min           = 0.00012
+
+entry_window_seconds = 25
+
+# --- Motor de Reversão V15 ---
+v15_score_min           = 55
+v15_score_gap_min       = 1
+v15_confirm_polls       = 1
+v15_rsi_period          = 14
+v15_rsi_oversold        = 30
+v15_rsi_overbought      = 70
+v15_bb_period           = 20
+v15_bb_std              = 2.0
+v15_bb_proximity        = 0.25
+v15_impulse_lookback    = 5
+v15_context_lookback    = 12
+v15_wick_ratio          = 0.45
+v15_candles_needed      = 40
+v15_trend_threshold     = 0.0008
+v15_impulse_threshold   = 0.0006
+v15_impulse_multiplier  = 8000
+v15_wick_score_max      = 25
+v15_wick_score_factor   = 35
+v15_fallback_near_score = 38
+
+# Filtro estrutural M5
+m5_extreme_candles = 20
+m5_extreme_frac    = 0.20
+
+# --- Canal Keltner ---
+keltner_enable = true
+keltner_period = 20
+keltner_shift  = 1.5
+
+# --- Pivôs / Fractais ---
+pivot_enable        = true
+pivot_left          = 2
+pivot_right         = 2
+pivot_proximity_pct = 0.002
+
+# --- Estratégia Respiro ---
+respiro_enable               = false
+respiro_impulse_lookback     = 5
+respiro_min_impulse          = 0.0010
+respiro_pullback_max_frac    = 0.618
+respiro_max_pullback_candles = 3
+respiro_trigger              = close_over_high
+respiro_confirm_polls        = 1
+
+# =============================================================================
+# [M15]  — Placeholder para implementação futura (não ativo ainda)
+# =============================================================================
+# entry_mode             = reversal
+# enable_atr_filter      = true
+# atr_min_ratio          = 0.000040
+# adx_min                = 22.0
+# bb_width_min           = 0.00120
+# slope_min              = 0.00020
+# entry_window_seconds   = 30
+# v15_score_min          = 60
+# keltner_enable         = true
+# pivot_enable           = true
+# respiro_enable         = false
