@@ -94,6 +94,8 @@ IDLE_SLEEP_S_M5 = 1.50
 PENDING_SLEEP_S_M1 = 0.25
 PENDING_SLEEP_S_M5 = 1.10
 PENDING_PRINT_THROTTLE_S = 12.0
+PENDING_FREEZE_SECONDS_M5: float = 6.0    # Duration of M5 freeze window (seconds); 0 = disabled
+PENDING_FREEZE_POLL_SLEEP_M5: float = 0.30 # Fast poll sleep during M5 freeze (seconds)
 
 RESULT_DELAY_AFTER_EXPIRY_SECONDS = 20
 
@@ -321,6 +323,7 @@ def _load_from_config() -> None:
     ou chave não existir no config.txt, o default hardcoded é preservado.
     """
     global IDLE_SLEEP_S_M1, IDLE_SLEEP_S_M5, PENDING_SLEEP_S_M1, PENDING_SLEEP_S_M5
+    global PENDING_FREEZE_SECONDS_M5, PENDING_FREEZE_POLL_SLEEP_M5
     global AMOUNT_MODE, AMOUNT_FIXED, AMOUNT_PERCENT, AMOUNT_RECALC_EACH, AMOUNT_MIN
     global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
     global ALLOW_OTC_LIVE
@@ -364,6 +367,7 @@ def _load_from_config() -> None:
     IDLE_SLEEP_S_M5 = _cfgget('SLEEP', 'idle_sleep_m5', IDLE_SLEEP_S_M5, float)
     PENDING_SLEEP_S_M1 = _cfgget('SLEEP', 'pending_sleep_m1', PENDING_SLEEP_S_M1, float)
     PENDING_SLEEP_S_M5 = _cfgget('SLEEP', 'pending_sleep_m5', PENDING_SLEEP_S_M5, float)
+    PENDING_FREEZE_POLL_SLEEP_M5 = _cfgget('SLEEP', 'pending_freeze_poll_sleep_m5', PENDING_FREEZE_POLL_SLEEP_M5, float)
 
     # [RISK]
     AMOUNT_MODE = _cfgget('RISK', 'amount_mode', AMOUNT_MODE)
@@ -450,6 +454,7 @@ def _load_from_config() -> None:
         if is_m5:
             globals()['M5_EXTREME_CANDLES'] = _cfgget(sec, 'm5_extreme_candles', M5_EXTREME_CANDLES, int)
             globals()['M5_EXTREME_FRAC'] = _cfgget(sec, 'm5_extreme_frac', M5_EXTREME_FRAC, float)
+            globals()['PENDING_FREEZE_SECONDS_M5'] = _cfgget(sec, 'pending_freeze_seconds_m5', PENDING_FREEZE_SECONDS_M5, float)
         else:
             globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
 
@@ -3344,7 +3349,14 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
 
                 ok_win, sec, win = within_entry_window(tf_min)
                 if not ok_win:
-                    _log_blocked("missed_early_entry", f"tf={tf_min} secs_elapsed={sec} window={win} BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}")
+                    _log_blocked(
+                        "missed_early_entry",
+                        f"ativo={ativo} tf={tf_min} "
+                        f"dir={direction} patt={patt} mode={pending.get('pattern_mode', '?')} "
+                        f"pattern_from={pending.get('pattern_from', '')} "
+                        f"secs_elapsed={sec} window={win} "
+                        f"BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}"
+                    )
                     pending = None
                     pending_id_active = None
                     pending_lock_until_ts = now_server + (period * 1)
@@ -3672,6 +3684,10 @@ def loop_patterns_multi(
             )
             break
 
+    # M5 pending-first freeze state (persists across loop iterations)
+    freeze_active: bool = False
+    freeze_end_ts: float = 0.0
+
     while True:
         # Verificação: limite de entradas aceitas atingido
         if max_entries > 0 and entries_accepted >= max_entries:
@@ -3712,10 +3728,33 @@ def loop_patterns_multi(
             time.sleep(idle_sleep * EMPTY_POOL_SLEEP_MULTIPLIER)
             continue
 
+        # --- M5 pending-first freeze: focus only on assets with pending signals ---
+        if tf_min == 5 and PENDING_FREEZE_SECONDS_M5 > 0:
+            pending_assets = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
+            if pending_assets and not freeze_active:
+                freeze_active = True
+                freeze_end_ts = time.time() + PENDING_FREEZE_SECONDS_M5
+                freeze_names = ", ".join(display_asset_name(a) for a, _ in pending_assets)
+                console_event(
+                    f"🔒 [FREEZE M5] Foco em pending por {int(PENDING_FREEZE_SECONDS_M5)}s "
+                    f"— ativos: {freeze_names}"
+                )
+            elif freeze_active:
+                if not pending_assets:
+                    freeze_active = False
+                    console_event("🔓 [FREEZE M5] Encerrado — todos os pending resolvidos")
+                elif time.time() >= freeze_end_ts:
+                    freeze_active = False
+                    console_event("🔓 [FREEZE M5] Encerrado — timeout")
+
         for ativo, ativo_chave in list(active_ativos):
             pend = per_asset_pending[ativo]
             pend_id = per_asset_pending_id[ativo]
             lock_until = per_asset_lock_until[ativo]
+
+            # During M5 freeze, skip assets with no pending signal — focus on pending only
+            if freeze_active and pend is None:
+                continue
 
             if pend is None and candle_id != per_asset_last_idle_cid[ativo]:
                 per_asset_last_idle_cid[ativo] = candle_id
@@ -3754,11 +3793,21 @@ def loop_patterns_multi(
 
                 if status == "confirmed" and direction in ("call", "put"):
                     patt = pend["pattern_name"]
+                    _detect_ts = pend.get("detected_ts", 0.0)
+                    _confirm_ts_now = time.time()
+                    _det_to_conf = f"{_confirm_ts_now - _detect_ts:.1f}s" if _detect_ts else "?"
                     _log_pattern_row(ativo, tf_min, "confirmed", pend, confirmed=True)
 
                     ok_win, sec, win = within_entry_window(tf_min)
                     if not ok_win:
-                        _log_blocked("missed_early_entry", f"ativo={ativo} tf={tf_min} secs_elapsed={sec} window={win} BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}")
+                        _log_blocked(
+                            "missed_early_entry",
+                            f"ativo={ativo} tf={tf_min} "
+                            f"dir={direction} patt={patt} mode={pend.get('pattern_mode', '?')} "
+                            f"pattern_from={pend.get('pattern_from', '')} "
+                            f"secs_elapsed={sec} window={win} "
+                            f"BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}"
+                        )
                         per_asset_pending[ativo] = None
                         per_asset_pending_id[ativo] = None
                         per_asset_lock_until[ativo] = now_server + period
@@ -3788,11 +3837,13 @@ def loop_patterns_multi(
 
                     console_event(
                         f"🕯️ [{server_hhmmss()}] [{display_asset_name(ativo)}] Sinal confirmado: {patt} | "
+                        f"⏱️ det→conf={_det_to_conf} | "
                         f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
                         f"${amount_to_use:.2f} | "
                         f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left}"
                     )
 
+                    _buy_start_ts = time.time()
                     result_container: Dict[str, Any] = {}
                     ev = threading.Event()
                     if USE_BUY_THREAD:
@@ -3810,6 +3861,7 @@ def loop_patterns_multi(
                             "order_id": info_b if status_b else None,
                             "info": info_b,
                         }
+                    _buy_elapsed = f"{time.time() - _buy_start_ts:.2f}s"
 
                     res = result_container.get("res", {})
                     if not res.get("success"):
@@ -3864,7 +3916,8 @@ def loop_patterns_multi(
                         entries_accepted += 1
                     console_event(
                         ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] Ordem aceita ({market_type_label}) | "
-                        f"ID: {order_id} | Entradas: {entries_accepted}"
+                        f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
+                        f"Entradas: {entries_accepted}"
                         + (f"/{max_entries}" if max_entries > 0 else ""))
                     )
                     console_event(
@@ -3920,6 +3973,7 @@ def loop_patterns_multi(
                                     patt, pend.get("pattern_from"),
                                     secs_left,
                                     trade_ativo, trade_chave,
+                                    pend.get("strategy", ""),
                                 ])
                     except Exception:
                         pass
@@ -3950,11 +4004,16 @@ def loop_patterns_multi(
                 asset_last_pending_print[new_pend_id] = nowt
                 _log_pattern_row(ativo, tf_min, "detected", sig)
 
+            sig["detected_ts"] = time.time()
             per_asset_pending[ativo] = sig
             per_asset_pending_id[ativo] = new_pend_id
             per_asset_lock_until[ativo] = int(sig["expected_confirm_from"]) + period
 
-        time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+        # Sleep: use fast freeze sleep during M5 freeze, normal idle otherwise
+        if freeze_active:
+            time.sleep(PENDING_FREEZE_POLL_SLEEP_M5)
+        else:
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
 
     print(f"✅ Loop multi-ativo finalizado. Entradas aceitas: {entries_accepted}")
 
