@@ -3685,8 +3685,8 @@ def loop_patterns_multi(
             break
 
     # M5 pending-first freeze state (persists across loop iterations)
-    _freeze_active: bool = False
-    _freeze_end_ts: float = 0.0
+    freeze_active: bool = False
+    freeze_end_ts: float = 0.0
 
     while True:
         # Verificação: limite de entradas aceitas atingido
@@ -3730,22 +3730,21 @@ def loop_patterns_multi(
 
         # --- M5 pending-first freeze: focus only on assets with pending signals ---
         if tf_min == 5 and PENDING_FREEZE_SECONDS_M5 > 0:
-            _pend_now = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
-            if _pend_now and not _freeze_active:
-                _freeze_active = True
-                _freeze_end_ts = time.time() + PENDING_FREEZE_SECONDS_M5
-                _freeze_names = ", ".join(display_asset_name(a) for a, _ in _pend_now)
+            pending_assets = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
+            if pending_assets and not freeze_active:
+                freeze_active = True
+                freeze_end_ts = time.time() + PENDING_FREEZE_SECONDS_M5
+                freeze_names = ", ".join(display_asset_name(a) for a, _ in pending_assets)
                 console_event(
                     f"🔒 [FREEZE M5] Foco em pending por {int(PENDING_FREEZE_SECONDS_M5)}s "
-                    f"— ativos: {_freeze_names}"
+                    f"— ativos: {freeze_names}"
                 )
-            elif _freeze_active:
-                _pend_now_check = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
-                if not _pend_now_check:
-                    _freeze_active = False
+            elif freeze_active:
+                if not pending_assets:
+                    freeze_active = False
                     console_event("🔓 [FREEZE M5] Encerrado — todos os pending resolvidos")
-                elif time.time() >= _freeze_end_ts:
-                    _freeze_active = False
+                elif time.time() >= freeze_end_ts:
+                    freeze_active = False
                     console_event("🔓 [FREEZE M5] Encerrado — timeout")
 
         for ativo, ativo_chave in list(active_ativos):
@@ -3754,7 +3753,7 @@ def loop_patterns_multi(
             lock_until = per_asset_lock_until[ativo]
 
             # During M5 freeze, skip assets with no pending signal — focus on pending only
-            if _freeze_active and pend is None:
+            if freeze_active and pend is None:
                 continue
 
             if pend is None and candle_id != per_asset_last_idle_cid[ativo]:
@@ -4011,7 +4010,7 @@ def loop_patterns_multi(
             per_asset_lock_until[ativo] = int(sig["expected_confirm_from"]) + period
 
         # Sleep: use fast freeze sleep during M5 freeze, normal idle otherwise
-        if _freeze_active:
+        if freeze_active:
             time.sleep(PENDING_FREEZE_POLL_SLEEP_M5)
         else:
             time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
