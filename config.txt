@@ -6,6 +6,7 @@
 # =============================================================================
 
 [LOGIN]
+# ATENÇÃO: Não commite credenciais reais. Preencha localmente.
 email = seu@email.com
 senha = suasenha
 
@@ -77,6 +78,9 @@ slope_min           = 0.000003
 
 # Janela de entrada (segundos a partir do início da vela)
 entry_window_seconds = 30
+
+# Máximo de ativos simultâneos para M1 (padrão: 2)
+max_assets = 2
 
 # --- Motor de Reversão V15 ---
 v15_score_min           = 55
@@ -153,6 +157,9 @@ slope_lookback      = 8
 slope_min           = 0.00012
 
 entry_window_seconds = 25
+
+# Máximo de ativos simultâneos para M5 (padrão: 4)
+max_assets = 4
 
 # --- Motor de Reversão V15 ---
 v15_score_min           = 55
