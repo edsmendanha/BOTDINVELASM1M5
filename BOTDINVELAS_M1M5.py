@@ -1137,7 +1137,7 @@ def passes_trend_strength_filter(tf_min: int, velas: List[Dict[str, Any]]) -> bo
             _log_blocked("range_squeeze_bbw", f"tf={tf_min} bbw={bbw}")
             failures += 1
         if slope is None or slope < slope_min:
-            _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope}")
+            _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope:.8f} slope_min={slope_min:.8f}")
             failures += 1
         if failures > 2:
             return False
@@ -1153,7 +1153,7 @@ def passes_trend_strength_filter(tf_min: int, velas: List[Dict[str, Any]]) -> bo
         return False
 
     if slope is None or slope < slope_min:
-        _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope}")
+        _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope:.8f} slope_min={slope_min:.8f}")
         return False
 
     return True
@@ -2797,14 +2797,26 @@ def ask_market_type() -> bool:
         print("❌ Opção inválida!")
 
 
-def ask_num_assets() -> int:
-    """Pergunta quantos ativos operar simultaneamente (1 a 4)."""
+def ask_num_assets(tf_min: int = 5) -> int:
+    """Pergunta quantos ativos operar simultaneamente (1 a 4).
+
+    O padrão sugerido varia de acordo com o timeframe:
+    - M1 → 2 ativos (janela curta; menos é mais preciso)
+    - M5 → 4 ativos (janela maior permite monitorar mais ativos)
+
+    O usuário pode aceitar o padrão ou escolher qualquer valor entre 1 e 4.
+    """
+    suggested = 2 if tf_min == 1 else 4
     print("\n" + "=" * 70)
     print("📊 NÚMERO DE ATIVOS SIMULTÂNEOS")
     print("=" * 70)
     print("  Escolha quantos ativos operar ao mesmo tempo (1 a 4).")
+    if tf_min == 1:
+        print("  💡 M1: recomendado 2 ativos (janela de entrada curta).")
+    else:
+        print("  💡 M5: recomendado 4 ativos (janela de entrada maior).")
     while True:
-        r = input("\n👉 Digite um número de 1 a 4 [4]: ").strip() or "4"
+        r = input(f"\n👉 Digite um número de 1 a 4 [{suggested}]: ").strip() or str(suggested)
         try:
             n = int(r)
             if 1 <= n <= 4:
@@ -3279,7 +3291,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
 
                 ok_win, sec, win = within_entry_window(tf_min)
                 if not ok_win:
-                    _log_blocked("missed_early_entry", f"tf={tf_min}")
+                    _log_blocked("missed_early_entry", f"tf={tf_min} secs_elapsed={sec} window={win} BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}")
                     pending = None
                     pending_id_active = None
                     pending_lock_until_ts = now_server + (period * 1)
@@ -3692,7 +3704,7 @@ def loop_patterns_multi(
 
                     ok_win, sec, win = within_entry_window(tf_min)
                     if not ok_win:
-                        _log_blocked("missed_early_entry", f"ativo={ativo} tf={tf_min}")
+                        _log_blocked("missed_early_entry", f"ativo={ativo} tf={tf_min} secs_elapsed={sec} window={win} BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}")
                         per_asset_pending[ativo] = None
                         per_asset_pending_id[ativo] = None
                         per_asset_lock_until[ativo] = now_server + period
@@ -3945,7 +3957,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # Número de ativos simultâneos
-    max_ativos = ask_num_assets()
+    max_ativos = ask_num_assets(TIMEFRAME_MINUTES)
 
     # Número máximo de entradas
     MAX_ENTRIES = ask_max_entries()
