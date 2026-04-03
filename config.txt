@@ -192,6 +192,12 @@ m5_extreme_frac    = 0.20
 # 0 = disable freeze (reverts to original round-robin behavior)
 pending_freeze_seconds_m5 = 6
 
+# Max age (seconds) for a pending M5 signal before it is dropped instead of retrying.
+# Prevents repeated freeze/timeout loops on stale pendings. Default aligns with entry
+# window so that late-arriving confirmations are discarded cleanly.
+# 0 = disable (rely only on PENDING_EXPIRE_CANDLES TTL from confirm_pending)
+pending_max_age_seconds_m5 = 45
+
 # --- Canal Keltner ---
 keltner_enable = true
 keltner_period = 20
