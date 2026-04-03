@@ -96,6 +96,7 @@ PENDING_SLEEP_S_M5 = 1.10
 PENDING_PRINT_THROTTLE_S = 12.0
 PENDING_FREEZE_SECONDS_M5: float = 6.0    # Duration of M5 freeze window (seconds); 0 = disabled
 PENDING_FREEZE_POLL_SLEEP_M5: float = 0.30 # Fast poll sleep during M5 freeze (seconds)
+PENDING_MAX_AGE_SECONDS_M5: float = 45.0  # Max age (s) for M5 pending before dropping; 0 = disabled
 
 RESULT_DELAY_AFTER_EXPIRY_SECONDS = 20
 
@@ -323,7 +324,7 @@ def _load_from_config() -> None:
     ou chave não existir no config.txt, o default hardcoded é preservado.
     """
     global IDLE_SLEEP_S_M1, IDLE_SLEEP_S_M5, PENDING_SLEEP_S_M1, PENDING_SLEEP_S_M5
-    global PENDING_FREEZE_SECONDS_M5, PENDING_FREEZE_POLL_SLEEP_M5
+    global PENDING_FREEZE_SECONDS_M5, PENDING_FREEZE_POLL_SLEEP_M5, PENDING_MAX_AGE_SECONDS_M5
     global AMOUNT_MODE, AMOUNT_FIXED, AMOUNT_PERCENT, AMOUNT_RECALC_EACH, AMOUNT_MIN
     global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
     global ALLOW_OTC_LIVE
@@ -455,6 +456,7 @@ def _load_from_config() -> None:
             globals()['M5_EXTREME_CANDLES'] = _cfgget(sec, 'm5_extreme_candles', M5_EXTREME_CANDLES, int)
             globals()['M5_EXTREME_FRAC'] = _cfgget(sec, 'm5_extreme_frac', M5_EXTREME_FRAC, float)
             globals()['PENDING_FREEZE_SECONDS_M5'] = _cfgget(sec, 'pending_freeze_seconds_m5', PENDING_FREEZE_SECONDS_M5, float)
+            globals()['PENDING_MAX_AGE_SECONDS_M5'] = _cfgget(sec, 'pending_max_age_seconds_m5', PENDING_MAX_AGE_SECONDS_M5, float)
         else:
             globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
 
@@ -3730,20 +3732,47 @@ def loop_patterns_multi(
 
         # --- M5 pending-first freeze: focus only on assets with pending signals ---
         if tf_min == 5 and PENDING_FREEZE_SECONDS_M5 > 0:
+            # Separate pendings into eligible (within TTL) and stale.
+            # Missing detected_ts is treated as age=0 (eligible), preserving backward compat.
+            _now_wall = time.time()
+            def _pend_eligible(a: str) -> bool:
+                p = per_asset_pending.get(a)
+                if p is None:
+                    return False
+                if PENDING_MAX_AGE_SECONDS_M5 <= 0:
+                    return True
+                _dts = p.get("detected_ts") or 0.0
+                _age = (_now_wall - _dts) if _dts > 0 else 0.0
+                return _age <= PENDING_MAX_AGE_SECONDS_M5
+
             pending_assets = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
-            if pending_assets and not freeze_active:
+            eligible_pending_assets = [(a, c) for a, c in pending_assets if _pend_eligible(a)]
+
+            if eligible_pending_assets and not freeze_active:
                 freeze_active = True
-                freeze_end_ts = time.time() + PENDING_FREEZE_SECONDS_M5
-                freeze_names = ", ".join(display_asset_name(a) for a, _ in pending_assets)
+                freeze_end_ts = _now_wall + PENDING_FREEZE_SECONDS_M5
+                freeze_names = ", ".join(display_asset_name(a) for a, _ in eligible_pending_assets)
                 console_event(
                     f"🔒 [FREEZE M5] Foco em pending por {int(PENDING_FREEZE_SECONDS_M5)}s "
                     f"— ativos: {freeze_names}"
                 )
+            elif pending_assets and not eligible_pending_assets and not freeze_active:
+                # All pendings are stale — skip freeze, will be dropped per-asset below
+                for a, _ in pending_assets:
+                    _log_blocked(
+                        "freeze_skip",
+                        f"ativo={a} tf={tf_min} "
+                        f"reason=all_pendings_stale "
+                        f"pend_max_age={PENDING_MAX_AGE_SECONDS_M5}"
+                    )
             elif freeze_active:
                 if not pending_assets:
                     freeze_active = False
                     console_event("🔓 [FREEZE M5] Encerrado — todos os pending resolvidos")
-                elif time.time() >= freeze_end_ts:
+                elif not eligible_pending_assets:
+                    freeze_active = False
+                    console_event("🔓 [FREEZE M5] Encerrado — pendings fora do TTL")
+                elif _now_wall >= freeze_end_ts:
                     freeze_active = False
                     console_event("🔓 [FREEZE M5] Encerrado — timeout")
 
@@ -3758,7 +3787,15 @@ def loop_patterns_multi(
 
             if pend is None and candle_id != per_asset_last_idle_cid[ativo]:
                 per_asset_last_idle_cid[ativo] = candle_id
-                console_event(f"⏳ Aguardando... (Ativo: {display_asset_name(ativo)} | TF: M{tf_min})")
+                if max_entries > 0:
+                    _entries_label = f" | Entradas: {entries_accepted}/{max_entries}"
+                elif entries_accepted > 0:
+                    _entries_label = f" | Entradas: {entries_accepted}"
+                else:
+                    _entries_label = ""
+                console_event(
+                    f"⏳ Aguardando... (Ativo: {display_asset_name(ativo)} | TF: M{tf_min}{_entries_label})"
+                )
 
             if not ativo_aberto(ativo, chave_preferida=ativo_chave):
                 _log_blocked("asset_closed", f"ativo={ativo} tf={tf_min}")
@@ -3772,6 +3809,28 @@ def loop_patterns_multi(
                 continue
 
             if pend is not None and pend_id is not None:
+                # M5 pending TTL: drop stale pendings that can no longer enter early.
+                # Missing detected_ts is treated as age=0 (eligible), same as _pend_eligible.
+                if tf_min == 5 and PENDING_MAX_AGE_SECONDS_M5 > 0:
+                    _pend_detected_ts = pend.get("detected_ts") or 0.0
+                    _pend_age = (time.time() - _pend_detected_ts) if _pend_detected_ts > 0 else 0.0
+                    if _pend_age > PENDING_MAX_AGE_SECONDS_M5:
+                        _log_blocked(
+                            "pending_timeout",
+                            f"ativo={ativo} tf={tf_min} "
+                            f"dir={pend.get('direction_hint', '?')} "
+                            f"patt={pend.get('pattern_name', '?')} "
+                            f"mode={pend.get('pattern_mode', '?')} "
+                            f"pattern_from={pend.get('pattern_from', '')} "
+                            f"expected_confirm_from={pend.get('expected_confirm_from', '')} "
+                            f"secs_elapsed={_pend_age:.1f} "
+                            f"window={PENDING_MAX_AGE_SECONDS_M5}"
+                        )
+                        per_asset_pending[ativo] = None
+                        per_asset_pending_id[ativo] = None
+                        per_asset_lock_until[ativo] = now_server + period
+                        continue
+
                 if per_asset_last_pend_status_id[ativo] != pend_id:
                     per_asset_last_pend_status_id[ativo] = pend_id
                     console_event(
@@ -3840,7 +3899,8 @@ def loop_patterns_multi(
                         f"⏱️ det→conf={_det_to_conf} | "
                         f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
                         f"${amount_to_use:.2f} | "
-                        f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left}"
+                        f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
+                        f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
                     )
 
                     _buy_start_ts = time.time()
@@ -3918,7 +3978,7 @@ def loop_patterns_multi(
                         ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] Ordem aceita ({market_type_label}) | "
                         f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
                         f"Entradas: {entries_accepted}"
-                        + (f"/{max_entries}" if max_entries > 0 else ""))
+                        + (f"/{max_entries}" if max_entries > 0 else "/∞"))
                     )
                     console_event(
                         f"⏳ [{server_hhmmss()}] [{display_asset_name(ativo)}] Aguardando resultado..."
