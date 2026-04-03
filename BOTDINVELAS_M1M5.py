@@ -17,7 +17,39 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-02-config-extern-v6"
+BOTDIN_VERSION = "2026-04-03-menu-colors-v7"
+
+# =========================
+# ANSI COLOR HELPERS
+# =========================
+def _ansi_supported() -> bool:
+    """Returns True if the terminal likely supports ANSI escape codes."""
+    if not sys.stdout.isatty():
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # Enable VIRTUAL_TERMINAL_PROCESSING (0x0004) on Windows 10+
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+            return True
+        except Exception:
+            return False
+    return True
+
+_USE_ANSI: bool = _ansi_supported()
+
+def _c(text: str, code: str) -> str:
+    """Wrap *text* with ANSI *code* and reset, if the terminal supports it."""
+    if _USE_ANSI:
+        return f"\033[{code}m{text}\033[0m"
+    return text
+
+def cgreen(text: str) -> str:  return _c(text, "32")
+def cred(text: str) -> str:    return _c(text, "31")
+def cyellow(text: str) -> str: return _c(text, "33")
+def ccyan(text: str) -> str:   return _c(text, "36")
+def cbold(text: str) -> str:   return _c(text, "1")
 
 # =========================
 # CONFIG
@@ -223,6 +255,10 @@ MAX_ENTRIES = 0
 
 BLOCKED_COUNTERS = defaultdict(int)
 
+# Máximo de ativos simultâneos por timeframe (sobrescrito por config.txt e menu)
+MAX_ASSETS_M1: int = 2
+MAX_ASSETS_M5: int = 4
+
 # =========================
 # GLOBALS POR TIMEFRAME — Keltner, Pivô, Respiro, V15 per-TF
 # (sobrescritos em _load_from_config() com valores do config.txt)
@@ -318,6 +354,7 @@ def _load_from_config() -> None:
     global RESPIRO_ENABLE_M5, RESPIRO_IMPULSE_LOOKBACK_M5, RESPIRO_MIN_IMPULSE_M5
     global RESPIRO_PULLBACK_MAX_FRAC_M5, RESPIRO_MAX_PULLBACK_CANDLES_M5
     global RESPIRO_TRIGGER_M5, RESPIRO_CONFIRM_POLLS_M5
+    global MAX_ASSETS_M1, MAX_ASSETS_M5
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
@@ -449,6 +486,10 @@ def _load_from_config() -> None:
         globals()[rpc_key] = _cfgget(sec, 'respiro_max_pullback_candles', globals()[rpc_key], int)
         globals()[rt_key] = _cfgget(sec, 'respiro_trigger', globals()[rt_key])
         globals()[rcp_key] = _cfgget(sec, 'respiro_confirm_polls', globals()[rcp_key], int)
+
+        # max_assets por TF
+        ma_key = 'MAX_ASSETS_M5' if is_m5 else 'MAX_ASSETS_M1'
+        globals()[ma_key] = _cfgget(sec, 'max_assets', globals()[ma_key], int)
 
     _load_tf('M1')
     _load_tf('M5')
@@ -635,9 +676,22 @@ def fmt_money_signed(v: Optional[float]) -> str:
 
 def fmt_result_line(label: str, profit: Optional[float], method: Optional[str]) -> str:
     _ = method  # console não mostra método
-    partes = [f"Resultado: {label.upper()}"]
+    label_upper = label.upper()
+    if label == "win":
+        label_str = cgreen(f"Resultado: {label_upper} ✅")
+    elif label == "loss":
+        label_str = cred(f"Resultado: {label_upper} ❌")
+    else:
+        label_str = f"Resultado: {label_upper} ❓"
+    partes = [label_str]
     if profit is not None:
-        partes.append(f"Profit: {fmt_money_signed(profit)}")
+        profit_str = fmt_money_signed(profit)
+        if float(profit) > 0:
+            partes.append(cgreen(f"Profit: {profit_str}"))
+        elif float(profit) < 0:
+            partes.append(cred(f"Profit: {profit_str}"))
+        else:
+            partes.append(f"Profit: {profit_str}")
     return " | ".join(partes)
 
 
@@ -2798,32 +2852,31 @@ def ask_market_type() -> bool:
 
 
 def ask_num_assets(tf_min: int = 5) -> int:
-    """Pergunta quantos ativos operar simultaneamente (1 a 4).
+    """Pergunta quantos ativos operar simultaneamente, respeitando o cap por TF.
 
-    O padrão sugerido varia de acordo com o timeframe:
-    - M1 → 2 ativos (janela curta; menos é mais preciso)
-    - M5 → 4 ativos (janela maior permite monitorar mais ativos)
-
-    O usuário pode aceitar o padrão ou escolher qualquer valor entre 1 e 4.
+    Limites configuráveis (config.txt [M1].max_assets / [M5].max_assets):
+    - M1 → máximo 2 ativos (janela curta; menos é mais preciso)
+    - M5 → máximo 4 ativos (janela maior permite monitorar mais ativos)
     """
-    suggested = 2 if tf_min == 1 else 4
+    max_cap = MAX_ASSETS_M1 if tf_min == 1 else MAX_ASSETS_M5
+    suggested = max_cap
     print("\n" + "=" * 70)
     print("📊 NÚMERO DE ATIVOS SIMULTÂNEOS")
     print("=" * 70)
-    print("  Escolha quantos ativos operar ao mesmo tempo (1 a 4).")
+    print(f"  Escolha quantos ativos operar ao mesmo tempo (1 a {max_cap}).")
     if tf_min == 1:
-        print("  💡 M1: recomendado 2 ativos (janela de entrada curta).")
+        print(cyellow(f"  💡 M1: máximo {max_cap} ativo(s) — janela de entrada curta."))
     else:
-        print("  💡 M5: recomendado 4 ativos (janela de entrada maior).")
+        print(ccyan(f"  💡 M5: máximo {max_cap} ativo(s) — janela de entrada maior."))
     while True:
-        r = input(f"\n👉 Digite um número de 1 a 4 [{suggested}]: ").strip() or str(suggested)
+        r = input(f"\n👉 Digite um número de 1 a {max_cap} [{suggested}]: ").strip() or str(suggested)
         try:
             n = int(r)
-            if 1 <= n <= 4:
+            if 1 <= n <= max_cap:
                 return n
+            print(cyellow(f"❌ Máximo permitido para M{tf_min} é {max_cap} ativo(s). Tente novamente."))
         except Exception:
-            pass
-        print("❌ Digite um número entre 1 e 4.")
+            print("❌ Digite um número inteiro válido.")
 
 
 def ask_time_hhmm(prompt):
@@ -3317,7 +3370,8 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
 
                 console_event(
                     f"🕯️ [{server_hhmmss()}] Sinal confirmado: {patt} | "
-                    f"Entrada: {direction.upper()} | ${amount_to_use:.2f} | secs_left={secs_left}"
+                    f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
+                    f"${amount_to_use:.2f} | secs_left={secs_left}"
                 )
 
                 result_container = {}
@@ -3336,14 +3390,14 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
 
                 res = result_container.get("res", {})
                 if not res.get("success"):
-                    console_event(f"❌ [{server_hhmmss()}] Falha ao enviar ordem.")
+                    console_event(cyellow(f"⚠️ [{server_hhmmss()}] Falha ao enviar ordem."))
                     pending = None
                     pending_id_active = None
                     pending_lock_until_ts = now_server + (period * 1)
                     continue
 
                 order_id = res.get("order_id")
-                console_event(f"✅ [{server_hhmmss()}] Ordem aceita | ID: {order_id}")
+                console_event(ccyan(f"✅ [{server_hhmmss()}] Ordem aceita | ID: {order_id}"))
                 console_event(f"⏳ [{server_hhmmss()}] Aguardando resultado...")
 
                 t0 = time.time()
@@ -3367,9 +3421,9 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
                 method = result.get("method")
 
                 if label == "win":
-                    console_event(f"✅ [{server_hhmmss()}] {fmt_result_line(label, profit, method)}")
+                    console_event(cgreen(f"✅ [{server_hhmmss()}] ") + fmt_result_line(label, profit, method))
                 elif label == "loss":
-                    console_event(f"❌ [{server_hhmmss()}] {fmt_result_line(label, profit, method)}")
+                    console_event(cred(f"❌ [{server_hhmmss()}] ") + fmt_result_line(label, profit, method))
                 else:
                     console_event(f"❓ [{server_hhmmss()}] {fmt_result_line(label, profit, method)}")
 
@@ -3734,7 +3788,8 @@ def loop_patterns_multi(
 
                     console_event(
                         f"🕯️ [{server_hhmmss()}] [{display_asset_name(ativo)}] Sinal confirmado: {patt} | "
-                        f"Entrada: {direction.upper()} | ${amount_to_use:.2f} | "
+                        f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
+                        f"${amount_to_use:.2f} | "
                         f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left}"
                     )
 
@@ -3760,12 +3815,12 @@ def loop_patterns_multi(
                     if not res.get("success"):
                         if trade_chave == 'digital':
                             console_event(
-                                f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
-                                f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback..."
+                                cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
+                                f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback...")
                             )
                         else:
                             console_event(
-                                f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] Falha ao enviar ordem."
+                                cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(ativo)}] Falha ao enviar ordem.")
                             )
                         # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
                         if trade_chave == 'digital':
@@ -3794,7 +3849,7 @@ def loop_patterns_multi(
                                     trade_chave = fb_chave
                                     market_type_label = "BINÁRIA"
                                     console_event(
-                                        f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}"
+                                        ccyan(f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}")
                                     )
                         if not res.get("success"):
                             per_asset_pending[ativo] = None
@@ -3808,9 +3863,9 @@ def loop_patterns_multi(
                     if order_id is not None:
                         entries_accepted += 1
                     console_event(
-                        f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] Ordem aceita ({market_type_label}) | "
+                        ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] Ordem aceita ({market_type_label}) | "
                         f"ID: {order_id} | Entradas: {entries_accepted}"
-                        + (f"/{max_entries}" if max_entries > 0 else "")
+                        + (f"/{max_entries}" if max_entries > 0 else ""))
                     )
                     console_event(
                         f"⏳ [{server_hhmmss()}] [{display_asset_name(ativo)}] Aguardando resultado..."
@@ -3838,13 +3893,13 @@ def loop_patterns_multi(
 
                     if label == "win":
                         console_event(
-                            f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
-                            f"{fmt_result_line(label, profit, method)}"
+                            cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
+                            + fmt_result_line(label, profit, method)
                         )
                     elif label == "loss":
                         console_event(
-                            f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
-                            f"{fmt_result_line(label, profit, method)}"
+                            cred(f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
+                            + fmt_result_line(label, profit, method)
                         )
                     else:
                         console_event(
@@ -3925,14 +3980,20 @@ if __name__ == '__main__':
     print("\n" + "=" * 70)
     print("💼 CONTA")
     print("=" * 70)
+    print("  1) " + ccyan("DEMO") + "  (conta prática — sem risco real)")
+    print("  2) " + cyellow("REAL") + "  (conta real — opera com dinheiro real)")
     while True:
-        escolha = input('\n👉 Selecione o tipo de conta (demo ou real): ').strip().lower()
-        if escolha in ('demo', 'real'):
+        escolha = input('\n👉 Selecione o tipo de conta [1]: ').strip() or "1"
+        if escolha == "1":
+            conta = 'PRACTICE'
             break
-        print('❌ Opção inválida! Digite "demo" ou "real"')
-    conta = 'PRACTICE' if escolha == 'demo' else 'REAL'
+        if escolha == "2":
+            conta = 'REAL'
+            break
+        print(cyellow('❌ Opção inválida! Digite 1 (DEMO) ou 2 (REAL).'))
     API.change_balance(conta)
-    print(f"✅ Conta selecionada: {'DEMO' if conta == 'PRACTICE' else 'REAL'}")
+    conta_label = ccyan("DEMO") if conta == 'PRACTICE' else cyellow("REAL")
+    print(f"✅ Conta selecionada: {conta_label}")
 
     # Timeframe (M1 ou M5)
     TIMEFRAME_MINUTES = ask_timeframe()
