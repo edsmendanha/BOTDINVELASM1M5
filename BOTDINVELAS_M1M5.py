@@ -686,9 +686,9 @@ def fmt_result_line(label: str, profit: Optional[float], method: Optional[str]) 
     partes = [label_str]
     if profit is not None:
         profit_str = fmt_money_signed(profit)
-        if profit is not None and float(profit) > 0:
+        if float(profit) > 0:
             partes.append(cgreen(f"Profit: {profit_str}"))
-        elif profit is not None and float(profit) < 0:
+        elif float(profit) < 0:
             partes.append(cred(f"Profit: {profit_str}"))
         else:
             partes.append(f"Profit: {profit_str}")
@@ -2876,8 +2876,6 @@ def ask_num_assets(tf_min: int = 5) -> int:
                 return n
             print(cyellow(f"❌ Máximo permitido para M{tf_min} é {max_cap} ativo(s). Tente novamente."))
         except Exception:
-            pass
-        if not r.isdigit():
             print("❌ Digite um número inteiro válido.")
 
 

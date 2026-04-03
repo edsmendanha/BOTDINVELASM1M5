@@ -6,7 +6,7 @@
 # =============================================================================
 
 [LOGIN]
-# ATENÇÃO: Não commite credenciais reais. Preencha localmente.
+# ATENÇÃO: Não comite credenciais reais. Preencha localmente.
 email = seu@email.com
 senha = suasenha
 
