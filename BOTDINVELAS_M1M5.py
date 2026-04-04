@@ -127,6 +127,7 @@ LATENCY_CSV: Optional[Path] = None
 TRADES_CSV: Optional[Path] = None
 PATTERNS_CSV: Optional[Path] = None
 ERRORS_LOG: Optional[Path] = None
+POOL_REBALANCE_LOG_M5: Optional[Path] = None
 
 
 def _mkdirp(p: Path):
@@ -147,6 +148,7 @@ def _sanitize_tag(tag: str) -> str:
 
 def _init_paths_with_tag(tag: str):
     global INSTANCE_TAG, BLOCKED_LOG, LATENCY_CSV, TRADES_CSV, PATTERNS_CSV, ERRORS_LOG
+    global POOL_REBALANCE_LOG_M5
 
     _mkdirp(LOG_DIR)
     _mkdirp(STATE_DIR)
@@ -158,6 +160,7 @@ def _init_paths_with_tag(tag: str):
     TRADES_CSV = LOG_DIR / f'trades_log_{INSTANCE_TAG}.csv'
     PATTERNS_CSV = LOG_DIR / f'patterns_log_{INSTANCE_TAG}.csv'
     ERRORS_LOG = LOG_DIR / f'runtime_errors_{INSTANCE_TAG}.log'
+    POOL_REBALANCE_LOG_M5 = LOG_DIR / 'pool_rebalance_m5.log'
 
 
 # =========================
@@ -263,6 +266,21 @@ MAX_ASSETS_M1: int = 2
 MAX_ASSETS_M5: int = 4
 
 # =========================
+# M5 DYNAMIC POOL MANAGER
+# =========================
+M5_POOL_DYNAMIC_ENABLE: bool = False
+M5_POOL_REBALANCE_MINUTES: float = 15.0
+M5_POOL_DEAD_MINUTES: float = 10.0
+M5_POOL_SWAP_MAX_NORMAL: int = 1
+M5_POOL_SWAP_MAX_DEAD: int = 2
+M5_POOL_ASSET_COOLDOWN_MINUTES: float = 30.0
+M5_POOL_SCORE_W_CONFIRMED: float = 3.0
+M5_POOL_SCORE_W_EXPIRED_REJECTED: float = 1.0
+M5_POOL_SCORE_W_MISSED: float = 1.5
+M5_POOL_SCORE_W_BLOCKED: float = 0.5
+M5_POOL_SCORE_W_DETECTED: float = 0.5
+
+# =========================
 # GLOBALS POR TIMEFRAME — Keltner, Pivô, Respiro, V15 per-TF
 # (sobrescritos em _load_from_config() com valores do config.txt)
 # =========================
@@ -359,6 +377,10 @@ def _load_from_config() -> None:
     global RESPIRO_PULLBACK_MAX_FRAC_M5, RESPIRO_MAX_PULLBACK_CANDLES_M5
     global RESPIRO_TRIGGER_M5, RESPIRO_CONFIRM_POLLS_M5
     global MAX_ASSETS_M1, MAX_ASSETS_M5
+    global M5_POOL_DYNAMIC_ENABLE, M5_POOL_REBALANCE_MINUTES, M5_POOL_DEAD_MINUTES
+    global M5_POOL_SWAP_MAX_NORMAL, M5_POOL_SWAP_MAX_DEAD, M5_POOL_ASSET_COOLDOWN_MINUTES
+    global M5_POOL_SCORE_W_CONFIRMED, M5_POOL_SCORE_W_EXPIRED_REJECTED
+    global M5_POOL_SCORE_W_MISSED, M5_POOL_SCORE_W_BLOCKED, M5_POOL_SCORE_W_DETECTED
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
@@ -457,6 +479,18 @@ def _load_from_config() -> None:
             globals()['M5_EXTREME_FRAC'] = _cfgget(sec, 'm5_extreme_frac', M5_EXTREME_FRAC, float)
             globals()['PENDING_FREEZE_SECONDS_M5'] = _cfgget(sec, 'pending_freeze_seconds_m5', PENDING_FREEZE_SECONDS_M5, float)
             globals()['PENDING_MAX_AGE_SECONDS_M5'] = _cfgget(sec, 'pending_max_age_seconds_m5', PENDING_MAX_AGE_SECONDS_M5, float)
+            # Dynamic pool manager config
+            globals()['M5_POOL_DYNAMIC_ENABLE'] = _cfgbool(sec, 'pool_dynamic_enable', M5_POOL_DYNAMIC_ENABLE)
+            globals()['M5_POOL_REBALANCE_MINUTES'] = _cfgget(sec, 'pool_rebalance_minutes', M5_POOL_REBALANCE_MINUTES, float)
+            globals()['M5_POOL_DEAD_MINUTES'] = _cfgget(sec, 'pool_dead_minutes', M5_POOL_DEAD_MINUTES, float)
+            globals()['M5_POOL_SWAP_MAX_NORMAL'] = _cfgget(sec, 'pool_swap_max_normal', M5_POOL_SWAP_MAX_NORMAL, int)
+            globals()['M5_POOL_SWAP_MAX_DEAD'] = _cfgget(sec, 'pool_swap_max_dead', M5_POOL_SWAP_MAX_DEAD, int)
+            globals()['M5_POOL_ASSET_COOLDOWN_MINUTES'] = _cfgget(sec, 'pool_asset_cooldown_minutes', M5_POOL_ASSET_COOLDOWN_MINUTES, float)
+            globals()['M5_POOL_SCORE_W_CONFIRMED'] = _cfgget(sec, 'pool_score_w_confirmed', M5_POOL_SCORE_W_CONFIRMED, float)
+            globals()['M5_POOL_SCORE_W_EXPIRED_REJECTED'] = _cfgget(sec, 'pool_score_w_expired_rejected', M5_POOL_SCORE_W_EXPIRED_REJECTED, float)
+            globals()['M5_POOL_SCORE_W_MISSED'] = _cfgget(sec, 'pool_score_w_missed', M5_POOL_SCORE_W_MISSED, float)
+            globals()['M5_POOL_SCORE_W_BLOCKED'] = _cfgget(sec, 'pool_score_w_blocked', M5_POOL_SCORE_W_BLOCKED, float)
+            globals()['M5_POOL_SCORE_W_DETECTED'] = _cfgget(sec, 'pool_score_w_detected', M5_POOL_SCORE_W_DETECTED, float)
         else:
             globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
 
@@ -3545,6 +3579,11 @@ def loop_patterns_multi(
     per_asset_last_pend_status_id: Dict[str, Any] = {}
     asset_last_pending_print: Dict[Any, float] = {}
 
+    # M5 dynamic pool manager state
+    m5_pool_stats: Dict[str, Dict[str, Any]] = {}
+    m5_pool_cooldown: Dict[str, float] = {}  # ativo_upper → removed_at timestamp
+    _last_m5_rebalance_ts: float = time.time()
+
     def _init_asset_state(name: str) -> None:
         if name not in per_asset_pending:
             per_asset_pending[name] = None
@@ -3646,6 +3685,11 @@ def loop_patterns_multi(
                 break
             if candidate.upper() in active_names:
                 continue
+            # M5 dynamic pool: skip assets in cooldown (recently removed by rebalancer)
+            if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                _cd_ts = m5_pool_cooldown.get(candidate.upper(), 0.0)
+                if (time.time() - _cd_ts) < M5_POOL_ASSET_COOLDOWN_MINUTES * 60:
+                    continue
             active_ativos.append((candidate, cat))
             _init_asset_state(candidate)
             active_names.add(candidate.upper())
@@ -3686,6 +3730,167 @@ def loop_patterns_multi(
             )
             break
 
+    # -----------------------------------------------------------------------
+    # M5 Dynamic Pool Manager helpers
+    # -----------------------------------------------------------------------
+    def _new_pool_stats() -> Dict[str, Any]:
+        return {
+            "detected": 0,
+            "confirmed": 0,
+            "rejected": 0,
+            "expired": 0,
+            "missed": 0,
+            "blocked": 0,
+            "last_detected_ts": 0.0,
+            "last_confirmed_ts": 0.0,
+        }
+
+    def _m5_track(event: str, ativo: str) -> None:
+        """Record an operational event for a given asset (M5 pool scoring)."""
+        s = m5_pool_stats.setdefault(ativo, _new_pool_stats())
+        now_t = time.time()
+        if event == "detected":
+            s["detected"] += 1
+            s["last_detected_ts"] = now_t
+        elif event == "confirmed":
+            s["confirmed"] += 1
+            s["last_confirmed_ts"] = now_t
+        elif event == "rejected":
+            s["rejected"] += 1
+        elif event == "expired":
+            s["expired"] += 1
+        elif event == "missed":
+            s["missed"] += 1
+        elif event == "blocked":
+            s["blocked"] += 1
+
+    def _m5_score(ativo: str) -> float:
+        """Compute operational health score for an asset (higher = better)."""
+        s = m5_pool_stats.get(ativo, {})
+        return (
+            s.get("confirmed", 0) * M5_POOL_SCORE_W_CONFIRMED
+            - (s.get("expired", 0) + s.get("rejected", 0)) * M5_POOL_SCORE_W_EXPIRED_REJECTED
+            - s.get("missed", 0) * M5_POOL_SCORE_W_MISSED
+            - s.get("blocked", 0) * M5_POOL_SCORE_W_BLOCKED
+            + (M5_POOL_SCORE_W_DETECTED if s.get("detected", 0) > 0 else 0.0)
+        )
+
+    def _m5_pool_is_dead() -> bool:
+        """Returns True when no asset in the pool had any activity for M5_POOL_DEAD_MINUTES.
+
+        Returns False for an empty pool (nothing to conclude yet) and for assets
+        that have never been observed (no stats recorded), to avoid spurious
+        dead-market swaps right at startup.
+        """
+        if not active_ativos:
+            return False
+        dead_secs = M5_POOL_DEAD_MINUTES * 60
+        now_t = time.time()
+        has_any_stats = False
+        for a, _ in active_ativos:
+            s = m5_pool_stats.get(a, {})
+            last_act = max(s.get("last_detected_ts", 0.0), s.get("last_confirmed_ts", 0.0))
+            if last_act > 0:
+                has_any_stats = True
+                if (now_t - last_act) <= dead_secs:
+                    return False
+        # If no asset has ever had any activity recorded, pool is too young to be called dead
+        return has_any_stats
+
+    def _log_rebalance(msg: str) -> None:
+        """Print rebalance event and append to pool_rebalance_m5.log."""
+        print(msg)
+        if POOL_REBALANCE_LOG_M5 is not None:
+            try:
+                with POOL_REBALANCE_LOG_M5.open('a', encoding='utf-8') as f:
+                    f.write(f"{datetime.now().isoformat()} | {INSTANCE_TAG} | {msg}\n")
+            except Exception:
+                pass
+
+    def _rebalance_m5_pool() -> None:
+        """Periodic M5 pool rebalance: swap worst-scoring assets for better candidates."""
+        nonlocal active_ativos, _last_m5_rebalance_ts
+        now_t = time.time()
+        if (now_t - _last_m5_rebalance_ts) < M5_POOL_REBALANCE_MINUTES * 60:
+            return
+        _last_m5_rebalance_ts = now_t
+
+        is_dead = _m5_pool_is_dead()
+        n_swap = M5_POOL_SWAP_MAX_DEAD if is_dead else M5_POOL_SWAP_MAX_NORMAL
+        reason = "dead-market" if is_dead else "interval"
+
+        # Candidates for removal: assets without active pending signal, sorted worst first
+        # Secondary sort by name ensures deterministic tie-breaking.
+        swappable = [(a, c) for a, c in active_ativos if per_asset_pending.get(a) is None]
+        if not swappable:
+            _log_rebalance(
+                f"[REBALANCE M5] razão={reason} — nenhum ativo disponível para trocar "
+                f"(todos com pending ativo)."
+            )
+            return
+
+        scored = sorted(swappable, key=lambda ac: (_m5_score(ac[0]), ac[0]))
+        to_remove = scored[:n_swap]
+
+        # Universe of replacement candidates
+        try:
+            universe = build_candidate_pool(use_otc=use_otc, tf_min=tf_min)
+        except Exception as exc:
+            _log_error("Falha ao buscar universo em _rebalance_m5_pool.", exc)
+            return
+
+        active_names = {a.upper() for a, _ in active_ativos}
+        cooldown_secs = M5_POOL_ASSET_COOLDOWN_MINUTES * 60
+        candidates = [
+            (a, c) for a, c in universe
+            if a.upper() not in active_names
+            and (now_t - m5_pool_cooldown.get(a.upper(), 0.0)) >= cooldown_secs
+        ]
+
+        if not candidates:
+            _log_rebalance(
+                f"[REBALANCE M5] razão={reason} — sem candidatos disponíveis no universo "
+                f"(cooldown ou todos já no pool). Nenhuma troca."
+            )
+            return
+
+        n_actual = min(n_swap, len(to_remove), len(candidates))
+        to_remove = to_remove[:n_actual]
+        to_add = candidates[:n_actual]
+
+        # Build score summary for logging
+        remove_set = {a for a, _ in to_remove}
+        score_lines = []
+        for a, _ in active_ativos:
+            sc = _m5_score(a)
+            s = m5_pool_stats.get(a, {})
+            tag_out = " ← SAINDO" if a in remove_set else ""
+            score_lines.append(
+                f"  {display_asset_name(a)}: score={sc:.1f} "
+                f"[det={s.get('detected', 0)} conf={s.get('confirmed', 0)} "
+                f"exp={s.get('expired', 0)} rej={s.get('rejected', 0)} "
+                f"miss={s.get('missed', 0)} blk={s.get('blocked', 0)}]{tag_out}"
+            )
+
+        msg = (
+            f"[REBALANCE M5] razão={reason} trocas={n_actual}\n"
+            + "\n".join(score_lines) + "\n"
+            + "  Removidos: " + ", ".join(display_asset_name(a) for a, _ in to_remove) + "\n"
+            + "  Adicionados: " + ", ".join(display_asset_name(a) for a, _ in to_add)
+        )
+        _log_rebalance(msg)
+
+        # Apply swaps — remove all at once (O(n+m)) then add new assets
+        for a, _ in to_remove:
+            m5_pool_cooldown[a.upper()] = now_t
+        active_ativos = [(av, cv) for av, cv in active_ativos if av not in remove_set]
+
+        for a, c in to_add:
+            active_ativos.append((a, c))
+            _init_asset_state(a)
+            if a not in m5_pool_stats:
+                m5_pool_stats[a] = _new_pool_stats()
+
     # M5 pending-first freeze state (persists across loop iterations)
     freeze_active: bool = False
     freeze_end_ts: float = 0.0
@@ -3720,6 +3925,10 @@ def loop_patterns_multi(
 
         # Recheck completo do pool a cada novo candle (sem ban permanente)
         _refill_pool(candle_id)
+
+        # M5 dynamic pool: periodic rebalance (only when feature is enabled)
+        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+            _rebalance_m5_pool()
 
         if not active_ativos:
             console_event(
@@ -3806,6 +4015,8 @@ def loop_patterns_multi(
                 continue
 
             if not passes_all_regime_filters(tf_min, velas):
+                if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                    _m5_track("blocked", ativo)
                 continue
 
             if pend is not None and pend_id is not None:
@@ -3845,6 +4056,11 @@ def loop_patterns_multi(
 
                 if status in ("expired", "rejected", "error"):
                     _log_pattern_row(ativo, tf_min, status, pend, block_reason=status)
+                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                        if status == "rejected":
+                            _m5_track("rejected", ativo)
+                        else:
+                            _m5_track("expired", ativo)
                     per_asset_pending[ativo] = None
                     per_asset_pending_id[ativo] = None
                     per_asset_lock_until[ativo] = now_server + period
@@ -3856,6 +4072,8 @@ def loop_patterns_multi(
                     _confirm_ts_now = time.time()
                     _det_to_conf = f"{_confirm_ts_now - _detect_ts:.1f}s" if _detect_ts else "?"
                     _log_pattern_row(ativo, tf_min, "confirmed", pend, confirmed=True)
+                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                        _m5_track("confirmed", ativo)
 
                     ok_win, sec, win = within_entry_window(tf_min)
                     if not ok_win:
@@ -3867,6 +4085,8 @@ def loop_patterns_multi(
                             f"secs_elapsed={sec} window={win} "
                             f"BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}"
                         )
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("missed", ativo)
                         per_asset_pending[ativo] = None
                         per_asset_pending_id[ativo] = None
                         per_asset_lock_until[ativo] = now_server + period
@@ -4068,6 +4288,8 @@ def loop_patterns_multi(
             per_asset_pending[ativo] = sig
             per_asset_pending_id[ativo] = new_pend_id
             per_asset_lock_until[ativo] = int(sig["expected_confirm_from"]) + period
+            if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                _m5_track("detected", ativo)
 
         # Sleep: use fast freeze sleep during M5 freeze, normal idle otherwise
         if freeze_active:
@@ -4224,6 +4446,15 @@ if __name__ == '__main__':
     _re_m1 = "on" if RESPIRO_ENABLE_M1 else "off"
     _re_m5 = "on" if RESPIRO_ENABLE_M5 else "off"
     print(f'Keltner: M1={_ke_m1} M5={_ke_m5} | Pivot: M1={_pe_m1} M5={_pe_m5} | Respiro: M1={_re_m1} M5={_re_m5}')
+    if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
+        print(
+            f'Pool Dinâmico M5: ATIVO | rebalance={M5_POOL_REBALANCE_MINUTES:.0f}min '
+            f'dead={M5_POOL_DEAD_MINUTES:.0f}min '
+            f'swap_normal={M5_POOL_SWAP_MAX_NORMAL} swap_dead={M5_POOL_SWAP_MAX_DEAD} '
+            f'cooldown={M5_POOL_ASSET_COOLDOWN_MINUTES:.0f}min'
+        )
+    elif TIMEFRAME_MINUTES == 5:
+        print('Pool Dinâmico M5: desativado (pool_dynamic_enable=false)')
     print(f'Logs: {LOG_DIR.as_posix()}/ | State: {STATE_DIR.as_posix()}/')
     print('=' * 70)
     print('\n🚀 Iniciando...\n')
