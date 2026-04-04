@@ -369,10 +369,10 @@ ARM_SCORE_MIN_M1: int = 60    # score mínimo V15 para ARM em M1 (mercado aberto
 ARM_SCORE_MIN_M5: int = 65    # score mínimo V15 para ARM em M5 (mercado aberto)
 FALLBACK_ARM_SCORE_MIN_M1: int = 55  # score mínimo para fallback (harami/hammer/engolfo)
 FALLBACK_ARM_SCORE_MIN_M5: int = 60
-SNIPER_WINDOW_SECONDS: int = 5         # janela rígida de execução: 0–5s após abertura da vela (M1)
+SNIPER_WINDOW_SECONDS: int = 5         # janela rígida de execução padrão (fallback; usar SNIPER_WINDOW_SECONDS_M1/M5)
 SNIPER_WINDOW_SECONDS_M1: int = 5
 SNIPER_WINDOW_SECONDS_M5: int = 5
-SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # True = também bloqueia se preço violar extremo da vela anterior (M1)
+SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # fallback; usar SNIPER_ANTIFAKEOUT_EXTREME_M1/M5
 SNIPER_ANTIFAKEOUT_EXTREME_M1: bool = False
 SNIPER_ANTIFAKEOUT_EXTREME_M5: bool = False
 
