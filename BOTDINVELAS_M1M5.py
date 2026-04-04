@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-04-m5-quality-timing-v9"
+BOTDIN_VERSION = "2026-04-04-m5-quality-timing-v10"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -129,6 +129,7 @@ PATTERNS_CSV: Optional[Path] = None
 ERRORS_LOG: Optional[Path] = None
 POOL_REBALANCE_LOG_M5: Optional[Path] = None
 SINAIS_LOG: Optional[Path] = None
+SINAIS_CONFIRMADOS_LOG: Optional[Path] = None
 
 
 def _mkdirp(p: Path):
@@ -149,7 +150,7 @@ def _sanitize_tag(tag: str) -> str:
 
 def _init_paths_with_tag(tag: str):
     global INSTANCE_TAG, BLOCKED_LOG, LATENCY_CSV, TRADES_CSV, PATTERNS_CSV, ERRORS_LOG
-    global POOL_REBALANCE_LOG_M5, SINAIS_LOG
+    global POOL_REBALANCE_LOG_M5, SINAIS_LOG, SINAIS_CONFIRMADOS_LOG
 
     _mkdirp(LOG_DIR)
     _mkdirp(STATE_DIR)
@@ -163,6 +164,7 @@ def _init_paths_with_tag(tag: str):
     ERRORS_LOG = LOG_DIR / f'runtime_errors_{INSTANCE_TAG}.log'
     POOL_REBALANCE_LOG_M5 = LOG_DIR / 'pool_rebalance_m5.log'
     SINAIS_LOG = LOG_DIR / f'sinais_{INSTANCE_TAG}.txt'
+    SINAIS_CONFIRMADOS_LOG = LOG_DIR / f'sinais_confirmados_{INSTANCE_TAG}.txt'
 
 
 # =========================
@@ -770,6 +772,44 @@ def console_event(line: str):
     print(line)
 
 
+def _log_sinal_confirmado(
+    ativo: str,
+    tf: int,
+    direction: str,
+    sig: Optional[Dict[str, Any]],
+    entra_em_ts: Optional[int] = None,
+) -> None:
+    """Grava SOMENTE sinais efetivamente emitidos para compra em sinais_confirmados_<tag>.txt.
+
+    Este arquivo contém APENAS as entradas que o bot efetivamente realizou.
+    Não inclui detected / rejected / pending_timeout.
+    Formato: HH:MM:SS | ATIVO | DIRECAO | TF | ENTRA_EM=HH:MM:SS | PADRAO
+    """
+    try:
+        if SINAIS_CONFIRMADOS_LOG is None:
+            return
+        ts_now = datetime.now().strftime("%H:%M:%S")
+        direction_upper = direction.upper()
+        tf_label = f"M{tf}"
+        if entra_em_ts is not None:
+            try:
+                entra_hms = datetime.fromtimestamp(int(entra_em_ts)).strftime("%H:%M:%S")
+            except Exception as e_ts:
+                _log_error(f"_log_sinal_confirmado: entra_em_ts={entra_em_ts} inválido.", e_ts)
+                entra_hms = ts_now
+        else:
+            entra_hms = ts_now
+        pattern_name = sig.get("pattern_name", "") if sig else ""
+        line = (
+            f"{ts_now} | {ativo} | {direction_upper} | {tf_label} | "
+            f"ENTRA_EM={entra_hms} | {pattern_name}"
+        )
+        with SINAIS_CONFIRMADOS_LOG.open('a', encoding='utf-8') as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
 # =========================
 # Display helpers
 # =========================
@@ -1116,14 +1156,26 @@ def can_purchase_now(ativo, period_minutes=1, chave_preferida=None):
 
 
 def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
-    for _ in range(max_tentativas):
+    """Busca candles com fallback de múltiplos end_ts para reduzir falhas/atrasos.
+
+    Tenta primeiro end_ts=agora; se insuficiente, tenta agora-tf e agora+tf para
+    contornar edge cases de sincronização do servidor (inspirado em 3EM1_IQ_v9-1).
+    """
+    for attempt in range(max_tentativas):
         try:
-            end_ts = API.get_server_timestamp()
-            velas = API.get_candles(ativo, timeframe, qnt, end_ts)
-            if velas and len(velas) >= qnt:
-                return velas
+            base_ts = API.get_server_timestamp()
+            # Tenta end_ts=agora primeiro; se não vier candles suficientes, tenta offsets alternativos
+            for offset in (0, -timeframe, timeframe):
+                try:
+                    end_ts = base_ts + offset
+                    velas = API.get_candles(ativo, timeframe, qnt, end_ts)
+                    if velas and len(velas) >= qnt:
+                        return velas
+                except Exception as e_inner:
+                    if offset != 0:
+                        _log_error(f"get_candles_safe offset={offset}s falhou.", e_inner)
         except Exception as e:
-            _log_error("Erro ao buscar candles.", e)
+            _log_error("Erro ao buscar candles (get_server_timestamp).", e)
         time.sleep(0.5)
     return None
 
@@ -4475,6 +4527,11 @@ def loop_patterns_multi(
                 order_id = res.get("order_id")
                 if order_id is not None:
                     entries_accepted += 1
+                    # Log compacto apenas de entradas efetivamente emitidas
+                    _log_sinal_confirmado(
+                        _bs_ativo, tf_min, _bs_dir, _bs_pend,
+                        entra_em_ts=_bs_pend.get("expected_confirm_from"),
+                    )
                 console_event(
                     ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Ordem aceita ({market_type_label}) | "
                     f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
@@ -4715,6 +4772,8 @@ if __name__ == '__main__':
     elif TIMEFRAME_MINUTES == 5:
         print('Pool Dinâmico M5: desativado (pool_dynamic_enable=false)')
     print(f'Logs: {LOG_DIR.as_posix()}/ | State: {STATE_DIR.as_posix()}/')
+    if SINAIS_CONFIRMADOS_LOG is not None:
+        print(f'Sinais confirmados: {SINAIS_CONFIRMADOS_LOG.as_posix()}')
     print('=' * 70)
     print('\n🚀 Iniciando...\n')
 
