@@ -250,6 +250,91 @@ EURUSD-OP
 
 ---
 
+## Pool Dinâmico M5 (`pool_dynamic_enable = true`)
+
+O Pool Dinâmico M5 é ativado na seção `[M5]` do `config.txt` e permite que
+o bot troque automaticamente os ativos do pool durante a operação, priorizando
+aqueles com melhor qualidade operacional.
+
+> ⚠️ **M1 não é afetado.** Apenas M5 usa o pool dinâmico.
+
+### Parâmetros de Rebalanceamento
+
+| Chave | Padrão | Descrição |
+|-------|--------|-----------|
+| `pool_dynamic_enable` | `false` | Ativa o pool dinâmico. |
+| `pool_rebalance_minutes` | `15` | Intervalo entre rebalanceamentos (min). |
+| `pool_dead_minutes` | `10` | Minutos sem atividade para declarar pool "morto" (troca agressiva). |
+| `pool_swap_max_normal` | `1` | Máximo de trocas por rebalance normal. |
+| `pool_swap_max_dead` | `2` | Máximo de trocas por rebalance quando pool está "morto". |
+| `pool_asset_cooldown_minutes` | `30` | Cooldown antes de um ativo removido poder voltar. |
+
+### Escalonamento por Universo
+
+Quando `pool_swap_scale_with_universe = true`, o número de trocas cresce
+proporcionalmente ao número de candidatos disponíveis além do pool atual.
+Isso garante rotação mais ampla quando há ~20 ativos abertos.
+
+| Chave | Padrão | Descrição |
+|-------|--------|-----------|
+| `pool_swap_scale_with_universe` | `true` | Ativa o escalonamento por universo. |
+| `pool_swap_universe_divisor` | `8` | 1 troca extra a cada N candidatos elegíveis. |
+| `pool_swap_max_abs` | `4` | Cap absoluto de trocas por ciclo. |
+
+**Exemplo:** com 16 candidatos elegíveis e `divisor=8`, `n_swap` sobe em +2.
+
+### Janela de Scoring
+
+| Chave | Padrão | Descrição |
+|-------|--------|-----------|
+| `pool_score_window_minutes` | `60` | Janela móvel (min) para scoring. Eventos mais antigos são ignorados. `0` = sem janela (acumulado). |
+
+### Pesos do Score
+
+O score de cada ativo é calculado como soma ponderada de eventos dentro da
+janela. Score mais alto = ativo melhor = menor chance de ser removido.
+
+| Chave | Padrão | Evento |
+|-------|--------|--------|
+| `pool_score_w_confirmed` | `3.0` | Sinal confirmado (bônus) |
+| `pool_score_w_win_trade` | `5.0` | Trade vencedor (bônus) |
+| `pool_score_w_detected` | `0.5` | Ao menos 1 detected (bônus pequeno) |
+| `pool_score_w_expired_rejected` | `1.0` | Sinal expirado/rejeitado (penalidade) |
+| `pool_score_w_missed` | `1.5` | `missed_early_entry` (penalidade) |
+| `pool_score_w_blocked` | `0.5` | Bloqueio por filtro de regime (penalidade) |
+| `pool_score_w_pending_timeout` | `2.0` | `pending_timeout` (penalidade) |
+| `pool_score_w_latency_guard` | `1.0` | `latency_guard` (penalidade) |
+| `pool_score_w_asset_closed` | `3.0` | Ativo fechado (penalidade + remoção imediata) |
+| `pool_score_w_loss_trade` | `1.0` | Trade perdedor (penalidade) |
+
+### Detecção de Mercado Morto via Donchian
+
+O bot calcula o **Donchian range ratio** = `(max_high - min_low) / mid_price`
+dos últimos `dead_market_donchian_period` candles M5 para cada ativo no pool.
+Ativos com range muito comprimido recebem penalidade extra no score.
+
+| Chave | Padrão | Descrição |
+|-------|--------|-----------|
+| `dead_market_donchian_period` | `10` | Janela em candles M5. `0` = desabilitado. |
+| `dead_market_range_ratio_thr` | `0.002` | Ratio mínimo. Abaixo → penalidade. |
+| `dead_market_penalty` | `5.0` | Pontos subtraídos do score no rebalance. |
+
+### Comportamento do asset_closed
+
+Quando um ativo no pool M5 dinâmico é detectado como fechado (`asset_closed`),
+ele é **removido imediatamente** do pool e entra em cooldown. Isso evita que
+o bot fique "parado" tentando operar em ativo inacessível.
+
+### Log pool_rebalance_m5.log
+
+O arquivo `logs/pool_rebalance_m5.log` mostra:
+- Universo total aberto (`universo=N`)
+- Candidatos elegíveis (`elegíveis=N`)
+- Score detalhado por ativo com breakdown por motivo
+- Ativos removidos e adicionados com justificativa
+
+---
+
 ## Logs e CSVs
 
 Os arquivos de log ficam na pasta `logs/`:
@@ -284,10 +369,11 @@ Os arquivos de log ficam na pasta `logs/`:
 - ✅ Padrões Engolfo Bullish/Bearish e Pinça Top/Bottom
 - ✅ Estratégia Respiro (continuação: impulso → pullback → entrada)
 - ✅ Restrição de OTC em conta real
+- ✅ Pool Dinâmico M5: janela móvel de scoring, Donchian dead-market, escalonamento por universo, remoção imediata de asset_closed, novos pesos (pending_timeout, latency_guard, win/loss trade), freeze_skip throttle
 - 🗂️ M15 — estrutura reservada no config.txt, lógica a implementar futuramente
 
 ---
 
 ## Versão
 
-`2026-04-02-config-extern-v6`
+`2026-04-04-dynamic-pool-m5-v8`
