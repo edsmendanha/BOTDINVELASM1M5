@@ -28,11 +28,12 @@ allow_otc_live = false
 [SLEEP]
 # =============================================================================
 idle_sleep_m1    = 0.20
-idle_sleep_m5    = 0.80
+# Reduzido para polling mais responsivo no M5 (não perder início de vela)
+idle_sleep_m5    = 0.60
 pending_sleep_m1 = 0.25
-pending_sleep_m5 = 0.50
+pending_sleep_m5 = 0.45
 # Fast poll interval used during M5 freeze window (pending-first mode)
-pending_freeze_poll_sleep_m5 = 0.15
+pending_freeze_poll_sleep_m5 = 0.20
 
 # =============================================================================
 [RISK]
@@ -151,12 +152,17 @@ atr_min_ratio       = 0.000020
 
 enable_trend_filter = true
 adx_period          = 14
-adx_min             = 18.0
+# Reduzido de 18 → 14: logs mostravam ADX 11-15 frequente em mercado aberto,
+# bloqueando quase tudo. Com 14, aceita tendências razoáveis sem entrar em lateral puro.
+adx_min             = 14
 bb_period           = 20
 bb_std              = 2.0
 bb_width_min        = 0.00070
 slope_lookback      = 8
-slope_min           = 0.00006
+# Reduzido de 0.00006 → 0.00004: slope observado nos logs era 0.00001-0.00005,
+# então 0.00006 bloqueava a maioria das entradas M5. Compromisso: aceita tendência
+# real, corta lateral extremo.
+slope_min           = 0.000040
 
 entry_window_seconds = 20
 
@@ -193,10 +199,11 @@ m5_extreme_frac    = 0.20
 pending_freeze_seconds_m5 = 2
 
 # Max age (seconds) for a pending M5 signal before it is dropped instead of retrying.
-# Prevents repeated freeze/timeout loops on stale pendings. Default aligns with entry
-# window so that late-arriving confirmations are discarded cleanly.
+# IMPORTANT: deve ser MAIOR que entry_window_seconds (20s) para que o pending não expire
+# antes da janela de entrada. Logs mostravam pending_timeout com secs_elapsed~21 e
+# window=15 — pending expirava antes da janela de entrada. Agora 25 > 20 + buffer.
 # 0 = disable (rely only on PENDING_EXPIRE_CANDLES TTL from confirm_pending)
-pending_max_age_seconds_m5 = 15
+pending_max_age_seconds_m5 = 25
 
 # --- Canal Keltner ---
 keltner_enable = true
