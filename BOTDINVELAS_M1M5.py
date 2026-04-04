@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-04-dynamic-pool-m5-v8"
+BOTDIN_VERSION = "2026-04-04-m5-quality-timing-v9"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -128,6 +128,7 @@ TRADES_CSV: Optional[Path] = None
 PATTERNS_CSV: Optional[Path] = None
 ERRORS_LOG: Optional[Path] = None
 POOL_REBALANCE_LOG_M5: Optional[Path] = None
+SINAIS_LOG: Optional[Path] = None
 
 
 def _mkdirp(p: Path):
@@ -148,7 +149,7 @@ def _sanitize_tag(tag: str) -> str:
 
 def _init_paths_with_tag(tag: str):
     global INSTANCE_TAG, BLOCKED_LOG, LATENCY_CSV, TRADES_CSV, PATTERNS_CSV, ERRORS_LOG
-    global POOL_REBALANCE_LOG_M5
+    global POOL_REBALANCE_LOG_M5, SINAIS_LOG
 
     _mkdirp(LOG_DIR)
     _mkdirp(STATE_DIR)
@@ -161,6 +162,7 @@ def _init_paths_with_tag(tag: str):
     PATTERNS_CSV = LOG_DIR / f'patterns_log_{INSTANCE_TAG}.csv'
     ERRORS_LOG = LOG_DIR / f'runtime_errors_{INSTANCE_TAG}.log'
     POOL_REBALANCE_LOG_M5 = LOG_DIR / 'pool_rebalance_m5.log'
+    SINAIS_LOG = LOG_DIR / f'sinais_{INSTANCE_TAG}.txt'
 
 
 # =========================
@@ -723,6 +725,43 @@ def _log_pattern_row(
         ]
         with PATTERNS_CSV.open('a', newline='', encoding='utf-8') as f:
             csv.writer(f).writerow(row)
+    except Exception:
+        pass
+
+
+def _log_sinal(
+    ativo: str,
+    tf: int,
+    event: str,
+    sig: Optional[Dict[str, Any]],
+    block_reason: Optional[str] = None,
+    details: Optional[str] = None,
+) -> None:
+    """Grava evento de sinal no arquivo sinais_<INSTANCE_TAG>.txt.
+
+    Formato: ts_iso | instance_tag | ativo | tf | event | pattern_name | mode |
+             pattern_from | expected_confirm_from | direction | call_score/put_score |
+             block_reason | details
+    """
+    try:
+        if SINAIS_LOG is None:
+            return
+        ts = datetime.now().isoformat()
+        direction = sig.get("direction_hint", "") if sig else ""
+        pattern_name = sig.get("pattern_name", "") if sig else ""
+        mode = sig.get("pattern_mode", "") if sig else ""
+        pattern_from = sig.get("pattern_from", "") if sig else ""
+        expected_confirm_from = sig.get("expected_confirm_from", "") if sig else ""
+        call_score = sig.get("call_score", "") if sig else ""
+        put_score = sig.get("put_score", "") if sig else ""
+        scores = f"call={call_score}/put={put_score}"
+        line = (
+            f"{ts} | {INSTANCE_TAG} | {ativo} | M{tf} | {event} | "
+            f"{pattern_name} | {mode} | {pattern_from} | {expected_confirm_from} | "
+            f"{direction} | {scores} | {block_reason or ''} | {details or ''}"
+        )
+        with SINAIS_LOG.open('a', encoding='utf-8') as f:
+            f.write(line + "\n")
     except Exception:
         pass
 
@@ -4143,6 +4182,9 @@ def loop_patterns_multi(
                     freeze_active = False
                     console_event("🔓 [FREEZE M5] Encerrado — timeout")
 
+        # Collect confirmed signals this cycle for best-signal selection (M5)
+        confirmed_this_cycle: List[Any] = []
+
         for ativo, ativo_chave in list(active_ativos):
             pend = per_asset_pending[ativo]
             pend_id = per_asset_pending_id[ativo]
@@ -4204,6 +4246,9 @@ def loop_patterns_multi(
                             f"secs_elapsed={_pend_age:.1f} "
                             f"window={PENDING_MAX_AGE_SECONDS_M5}"
                         )
+                        _log_sinal(ativo, tf_min, "pending_timeout", pend,
+                                   block_reason="pending_timeout",
+                                   details=f"secs_elapsed={_pend_age:.1f}")
                         if M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("pending_timeout", ativo)
                         per_asset_pending[ativo] = None
@@ -4225,6 +4270,7 @@ def loop_patterns_multi(
 
                 if status in ("expired", "rejected", "error"):
                     _log_pattern_row(ativo, tf_min, status, pend, block_reason=status)
+                    _log_sinal(ativo, tf_min, status, pend, block_reason=status)
                     if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
                         if status == "rejected":
                             _m5_track("rejected", ativo)
@@ -4237,10 +4283,10 @@ def loop_patterns_multi(
 
                 if status == "confirmed" and direction in ("call", "put"):
                     patt = pend["pattern_name"]
-                    _detect_ts = pend.get("detected_ts", 0.0)
-                    _confirm_ts_now = time.time()
-                    _det_to_conf = f"{_confirm_ts_now - _detect_ts:.1f}s" if _detect_ts else "?"
+                    _detect_ts_c = pend.get("detected_ts", 0.0)
+                    _det_to_conf_c = f"{time.time() - _detect_ts_c:.1f}s" if _detect_ts_c else "?"
                     _log_pattern_row(ativo, tf_min, "confirmed", pend, confirmed=True)
+                    _log_sinal(ativo, tf_min, "confirmed", pend)
                     if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
                         _m5_track("confirmed", ativo)
 
@@ -4254,6 +4300,9 @@ def loop_patterns_multi(
                             f"secs_elapsed={sec} window={win} "
                             f"BUY_LATENCY_AVG={BUY_LATENCY_AVG:.3f}"
                         )
+                        _log_sinal(ativo, tf_min, "missed_early_entry", pend,
+                                   block_reason="missed_early_entry",
+                                   details=f"sec={sec} win={win}")
                         if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("missed", ativo)
                         per_asset_pending[ativo] = None
@@ -4263,6 +4312,7 @@ def loop_patterns_multi(
 
                     if BUY_LATENCY_AVG + BUY_LATENCY_MARGIN >= (win - sec):
                         _log_blocked("latency_guard", f"ativo={ativo} tf={tf_min}")
+                        _log_sinal(ativo, tf_min, "latency_guard", pend, block_reason="latency_guard")
                         if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("latency_guard", ativo)
                         per_asset_pending[ativo] = None
@@ -4277,166 +4327,12 @@ def loop_patterns_multi(
                         per_asset_lock_until[ativo] = now_server + period
                         continue
 
-                    saldo_before = get_available_balance() or 0.0
-                    amount_to_use = compute_amount(saldo_before)
-                    secs_left = seconds_left_in_period(tf_min)
-
-                    # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC)
-                    trade_ativo, trade_chave = resolve_trade_variant(ativo, ativo_chave, use_otc=use_otc)
-                    market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
-
-                    console_event(
-                        f"🕯️ [{server_hhmmss()}] [{display_asset_name(ativo)}] Sinal confirmado: {patt} | "
-                        f"⏱️ det→conf={_det_to_conf} | "
-                        f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
-                        f"${amount_to_use:.2f} | "
-                        f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
-                        f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
+                    # Signal is valid — collect for best-signal selection (executed below)
+                    _v15_score_c = pend.get("v15_score", 0)
+                    confirmed_this_cycle.append(
+                        (_v15_score_c, sec, ativo, ativo_chave, direction, pend, _det_to_conf_c)
                     )
-
-                    _buy_start_ts = time.time()
-                    result_container: Dict[str, Any] = {}
-                    ev = threading.Event()
-                    if USE_BUY_THREAD:
-                        t = threading.Thread(
-                            target=_buy_worker,
-                            args=(direction, trade_ativo, amount_to_use, expiration, result_container, ev, trade_chave),
-                            daemon=True
-                        )
-                        t.start()
-                        ev.wait(timeout=25.0)
-                    else:
-                        status_b, info_b = _do_buy_minimal(amount_to_use, trade_ativo, direction, expiration, trade_chave)
-                        result_container["res"] = {
-                            "success": bool(status_b),
-                            "order_id": info_b if status_b else None,
-                            "info": info_b,
-                        }
-                    _buy_elapsed = f"{time.time() - _buy_start_ts:.2f}s"
-
-                    res = result_container.get("res", {})
-                    if not res.get("success"):
-                        if trade_chave == 'digital':
-                            console_event(
-                                cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
-                                f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback...")
-                            )
-                        else:
-                            console_event(
-                                cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(ativo)}] Falha ao enviar ordem.")
-                            )
-                        # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
-                        if trade_chave == 'digital':
-                            fb_name, fb_chave = find_preferred_variant_with_rules(
-                                _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', ativo.upper())),
-                                allow_otc=use_otc
-                            )
-                            if fb_name and fb_chave and fb_chave != 'digital':
-                                fb_container: Dict[str, Any] = {}
-                                fb_ev = threading.Event()
-                                if USE_BUY_THREAD:
-                                    fb_t = threading.Thread(
-                                        target=_buy_worker,
-                                        args=(direction, fb_name, amount_to_use, expiration, fb_container, fb_ev, fb_chave),
-                                        daemon=True
-                                    )
-                                    fb_t.start()
-                                    fb_ev.wait(timeout=25.0)
-                                else:
-                                    fb_s, fb_i = _do_buy_minimal(amount_to_use, fb_name, direction, expiration, fb_chave)
-                                    fb_container["res"] = {"success": bool(fb_s), "order_id": fb_i if fb_s else None, "info": fb_i}
-                                fb_res = fb_container.get("res", {})
-                                if fb_res.get("success"):
-                                    res = fb_res
-                                    trade_ativo = fb_name
-                                    trade_chave = fb_chave
-                                    market_type_label = "BINÁRIA"
-                                    console_event(
-                                        ccyan(f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}")
-                                    )
-                        if not res.get("success"):
-                            per_asset_pending[ativo] = None
-                            per_asset_pending_id[ativo] = None
-                            # Remove ativo imediatamente e busca substituto
-                            _replace_asset(ativo)
-                            break
-
-                    # Chegamos aqui apenas quando res.get("success") é True
-                    order_id = res.get("order_id")
-                    if order_id is not None:
-                        entries_accepted += 1
-                    console_event(
-                        ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] Ordem aceita ({market_type_label}) | "
-                        f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
-                        f"Entradas: {entries_accepted}"
-                        + (f"/{max_entries}" if max_entries > 0 else "/∞"))
-                    )
-                    console_event(
-                        f"⏳ [{server_hhmmss()}] [{display_asset_name(ativo)}] Aguardando resultado..."
-                    )
-
-                    t0 = time.time()
-                    min_wait = expiration * 60 + RESULT_DELAY_AFTER_EXPIRY_SECONDS
-                    while time.time() - t0 < min_wait:
-                        time.sleep(0.5)
-
-                    timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
-                    timeout = max(35, timeout)
-
-                    result = check_order_result(
-                        order_id, amount_to_use,
-                        saldo_before=saldo_before,
-                        timeout_seconds=timeout,
-                        poll_interval=2.0,
-                    )
-
-                    label = result.get("result", "unknown")
-                    profit = result.get("profit")
-                    bal_after = result.get("balance_after")
-                    method = result.get("method")
-
-                    if label == "win":
-                        console_event(
-                            cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
-                            + fmt_result_line(label, profit, method)
-                        )
-                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
-                            _m5_track("win_trade", ativo)
-                    elif label == "loss":
-                        console_event(
-                            cred(f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
-                            + fmt_result_line(label, profit, method)
-                        )
-                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
-                            _m5_track("loss_trade", ativo)
-                    else:
-                        console_event(
-                            f"❓ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
-                            f"{fmt_result_line(label, profit, method)}"
-                        )
-
-                    try:
-                        if TRADES_CSV is not None:
-                            with TRADES_CSV.open('a', newline='', encoding='utf-8') as f:
-                                csv.writer(f).writerow([
-                                    now_iso(), INSTANCE_TAG,
-                                    ativo, tf_min, ENTRY_MODE, RIGIDEZ_MODE,
-                                    direction, order_id,
-                                    method, label, float(profit) if profit is not None else "",
-                                    saldo_before, bal_after if bal_after is not None else "",
-                                    amount_to_use, f"{BUY_LATENCY_AVG:.6f}",
-                                    patt, pend.get("pattern_from"),
-                                    secs_left,
-                                    trade_ativo, trade_chave,
-                                    pend.get("strategy", ""),
-                                ])
-                    except Exception:
-                        pass
-
-                    per_asset_pending[ativo] = None
-                    per_asset_pending_id[ativo] = None
-                    per_asset_lock_until[ativo] = now_server + period
-                    continue
+                    # Do NOT clear pending here — handled in selection block below
 
             if now_server < lock_until:
                 continue
@@ -4458,6 +4354,7 @@ def loop_patterns_multi(
                 )
                 asset_last_pending_print[new_pend_id] = nowt
                 _log_pattern_row(ativo, tf_min, "detected", sig)
+                _log_sinal(ativo, tf_min, "detected", sig)
 
             sig["detected_ts"] = time.time()
             per_asset_pending[ativo] = sig
@@ -4465,6 +4362,190 @@ def loop_patterns_multi(
             per_asset_lock_until[ativo] = int(sig["expected_confirm_from"]) + period
             if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
                 _m5_track("detected", ativo)
+
+        # Best-signal selection: when multiple signals are confirmed simultaneously in M5,
+        # choose the ONE with the highest V15 score (tiebreak: fewest seconds into candle).
+        # For M1 (fast TF) all confirmed signals are allowed (max 2 assets anyway).
+        if confirmed_this_cycle:
+            if tf_min == 5 and len(confirmed_this_cycle) > 1:
+                # Sort: highest v15_score first, then lowest sec_in_candle (closest to open)
+                confirmed_this_cycle.sort(key=lambda x: (-x[0], x[1]))
+                for _, _, skip_a, _, _, skip_pend, _ in confirmed_this_cycle[1:]:
+                    console_event(
+                        f"⏭️ [{display_asset_name(skip_a)}] Sinal ignorado — "
+                        f"melhor sinal selecionado: {confirmed_this_cycle[0][2]} "
+                        f"(score={confirmed_this_cycle[0][0]})"
+                    )
+                    _log_sinal(skip_a, tf_min, "skipped", skip_pend,
+                               block_reason="best_signal_selected",
+                               details=f"best={confirmed_this_cycle[0][2]} score={confirmed_this_cycle[0][0]}")
+                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                        _m5_track("missed", skip_a)
+                    per_asset_pending[skip_a] = None
+                    per_asset_pending_id[skip_a] = None
+                    per_asset_lock_until[skip_a] = now_server + period
+
+            # Execute the selected (best or only) confirmed signal
+            _bs_score, _bs_sec, _bs_ativo, _bs_chave, _bs_dir, _bs_pend, _bs_d2c = confirmed_this_cycle[0]
+            _bs_patt = _bs_pend["pattern_name"]
+
+            saldo_before = get_available_balance() or 0.0
+            amount_to_use = compute_amount(saldo_before)
+            secs_left = seconds_left_in_period(tf_min)
+
+            # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC)
+            trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=use_otc)
+            market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
+
+            console_event(
+                f"🕯️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Sinal confirmado: {_bs_patt} | "
+                f"⏱️ det→conf={_bs_d2c} | "
+                f"Entrada: {cgreen('CALL 📈') if _bs_dir == 'call' else cred('PUT 📉')} | "
+                f"${amount_to_use:.2f} | "
+                f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
+                f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
+            )
+
+            _buy_start_ts = time.time()
+            result_container: Dict[str, Any] = {}
+            ev = threading.Event()
+            if USE_BUY_THREAD:
+                t = threading.Thread(
+                    target=_buy_worker,
+                    args=(_bs_dir, trade_ativo, amount_to_use, expiration, result_container, ev, trade_chave),
+                    daemon=True
+                )
+                t.start()
+                ev.wait(timeout=25.0)
+            else:
+                status_b, info_b = _do_buy_minimal(amount_to_use, trade_ativo, _bs_dir, expiration, trade_chave)
+                result_container["res"] = {
+                    "success": bool(status_b),
+                    "order_id": info_b if status_b else None,
+                    "info": info_b,
+                }
+            _buy_elapsed = f"{time.time() - _buy_start_ts:.2f}s"
+
+            res = result_container.get("res", {})
+            if not res.get("success"):
+                if trade_chave == 'digital':
+                    console_event(
+                        cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
+                        f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback...")
+                    )
+                else:
+                    console_event(
+                        cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Falha ao enviar ordem.")
+                    )
+                # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
+                if trade_chave == 'digital':
+                    fb_name, fb_chave = find_preferred_variant_with_rules(
+                        _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', _bs_ativo.upper())),
+                        allow_otc=use_otc
+                    )
+                    if fb_name and fb_chave and fb_chave != 'digital':
+                        fb_container: Dict[str, Any] = {}
+                        fb_ev = threading.Event()
+                        if USE_BUY_THREAD:
+                            fb_t = threading.Thread(
+                                target=_buy_worker,
+                                args=(_bs_dir, fb_name, amount_to_use, expiration, fb_container, fb_ev, fb_chave),
+                                daemon=True
+                            )
+                            fb_t.start()
+                            fb_ev.wait(timeout=25.0)
+                        else:
+                            fb_s, fb_i = _do_buy_minimal(amount_to_use, fb_name, _bs_dir, expiration, fb_chave)
+                            fb_container["res"] = {"success": bool(fb_s), "order_id": fb_i if fb_s else None, "info": fb_i}
+                        fb_res = fb_container.get("res", {})
+                        if fb_res.get("success"):
+                            res = fb_res
+                            trade_ativo = fb_name
+                            trade_chave = fb_chave
+                            market_type_label = "BINÁRIA"
+                            console_event(
+                                ccyan(f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}")
+                            )
+                if not res.get("success"):
+                    per_asset_pending[_bs_ativo] = None
+                    per_asset_pending_id[_bs_ativo] = None
+                    _replace_asset(_bs_ativo)
+            else:
+                # Chegamos aqui apenas quando res.get("success") é True
+                order_id = res.get("order_id")
+                if order_id is not None:
+                    entries_accepted += 1
+                console_event(
+                    ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Ordem aceita ({market_type_label}) | "
+                    f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
+                    f"Entradas: {entries_accepted}"
+                    + (f"/{max_entries}" if max_entries > 0 else "/∞"))
+                )
+                console_event(
+                    f"⏳ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Aguardando resultado..."
+                )
+
+                t0 = time.time()
+                min_wait = expiration * 60 + RESULT_DELAY_AFTER_EXPIRY_SECONDS
+                while time.time() - t0 < min_wait:
+                    time.sleep(0.5)
+
+                timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
+                timeout = max(35, timeout)
+
+                result = check_order_result(
+                    order_id, amount_to_use,
+                    saldo_before=saldo_before,
+                    timeout_seconds=timeout,
+                    poll_interval=2.0,
+                )
+
+                label = result.get("result", "unknown")
+                profit = result.get("profit")
+                bal_after = result.get("balance_after")
+                method = result.get("method")
+
+                if label == "win":
+                    console_event(
+                        cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
+                        + fmt_result_line(label, profit, method)
+                    )
+                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                        _m5_track("win_trade", _bs_ativo)
+                elif label == "loss":
+                    console_event(
+                        cred(f"❌ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
+                        + fmt_result_line(label, profit, method)
+                    )
+                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                        _m5_track("loss_trade", _bs_ativo)
+                else:
+                    console_event(
+                        f"❓ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
+                        f"{fmt_result_line(label, profit, method)}"
+                    )
+
+                try:
+                    if TRADES_CSV is not None:
+                        with TRADES_CSV.open('a', newline='', encoding='utf-8') as f:
+                            csv.writer(f).writerow([
+                                now_iso(), INSTANCE_TAG,
+                                _bs_ativo, tf_min, ENTRY_MODE, RIGIDEZ_MODE,
+                                _bs_dir, order_id,
+                                method, label, float(profit) if profit is not None else "",
+                                saldo_before, bal_after if bal_after is not None else "",
+                                amount_to_use, f"{BUY_LATENCY_AVG:.6f}",
+                                _bs_patt, _bs_pend.get("pattern_from"),
+                                secs_left,
+                                trade_ativo, trade_chave,
+                                _bs_pend.get("strategy", ""),
+                            ])
+                except Exception:
+                    pass
+
+                per_asset_pending[_bs_ativo] = None
+                per_asset_pending_id[_bs_ativo] = None
+                per_asset_lock_until[_bs_ativo] = now_server + period
 
         # Sleep: use fast freeze sleep during M5 freeze, normal idle otherwise
         if freeze_active:
