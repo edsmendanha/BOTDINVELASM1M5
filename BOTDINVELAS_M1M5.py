@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-03-menu-colors-v7"
+BOTDIN_VERSION = "2026-04-04-dynamic-pool-m5-v8"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -279,6 +279,24 @@ M5_POOL_SCORE_W_EXPIRED_REJECTED: float = 1.0
 M5_POOL_SCORE_W_MISSED: float = 1.5
 M5_POOL_SCORE_W_BLOCKED: float = 0.5
 M5_POOL_SCORE_W_DETECTED: float = 0.5
+# Extended M5 pool scoring weights
+M5_POOL_SCORE_W_PENDING_TIMEOUT: float = 2.0
+M5_POOL_SCORE_W_LATENCY_GUARD: float = 1.0
+M5_POOL_SCORE_W_ASSET_CLOSED: float = 3.0
+M5_POOL_SCORE_W_WIN_TRADE: float = 5.0
+M5_POOL_SCORE_W_LOSS_TRADE: float = 1.0
+# Sliding window duration for M5 pool scoring (minutes; 0 = cumulative / no window)
+M5_POOL_SCORE_WINDOW_MINUTES: float = 60.0
+
+# Dead-market detection via Donchian range (M5 pool)
+M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD: int = 10
+M5_POOL_DEAD_MARKET_RANGE_RATIO_THR: float = 0.002
+M5_POOL_DEAD_MARKET_PENALTY: float = 5.0
+
+# Universe-size-aware swap scaling
+M5_POOL_SWAP_SCALE_WITH_UNIVERSE: bool = True
+M5_POOL_SWAP_UNIVERSE_DIVISOR: int = 8   # 1 extra swap per N candidates beyond pool
+M5_POOL_SWAP_MAX_ABS: int = 4            # absolute cap on swaps per rebalance cycle
 
 # =========================
 # GLOBALS POR TIMEFRAME — Keltner, Pivô, Respiro, V15 per-TF
@@ -381,6 +399,12 @@ def _load_from_config() -> None:
     global M5_POOL_SWAP_MAX_NORMAL, M5_POOL_SWAP_MAX_DEAD, M5_POOL_ASSET_COOLDOWN_MINUTES
     global M5_POOL_SCORE_W_CONFIRMED, M5_POOL_SCORE_W_EXPIRED_REJECTED
     global M5_POOL_SCORE_W_MISSED, M5_POOL_SCORE_W_BLOCKED, M5_POOL_SCORE_W_DETECTED
+    global M5_POOL_SCORE_W_PENDING_TIMEOUT, M5_POOL_SCORE_W_LATENCY_GUARD
+    global M5_POOL_SCORE_W_ASSET_CLOSED, M5_POOL_SCORE_W_WIN_TRADE, M5_POOL_SCORE_W_LOSS_TRADE
+    global M5_POOL_SCORE_WINDOW_MINUTES
+    global M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD, M5_POOL_DEAD_MARKET_RANGE_RATIO_THR
+    global M5_POOL_DEAD_MARKET_PENALTY
+    global M5_POOL_SWAP_SCALE_WITH_UNIVERSE, M5_POOL_SWAP_UNIVERSE_DIVISOR, M5_POOL_SWAP_MAX_ABS
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
@@ -491,6 +515,21 @@ def _load_from_config() -> None:
             globals()['M5_POOL_SCORE_W_MISSED'] = _cfgget(sec, 'pool_score_w_missed', M5_POOL_SCORE_W_MISSED, float)
             globals()['M5_POOL_SCORE_W_BLOCKED'] = _cfgget(sec, 'pool_score_w_blocked', M5_POOL_SCORE_W_BLOCKED, float)
             globals()['M5_POOL_SCORE_W_DETECTED'] = _cfgget(sec, 'pool_score_w_detected', M5_POOL_SCORE_W_DETECTED, float)
+            # Extended scoring weights
+            globals()['M5_POOL_SCORE_W_PENDING_TIMEOUT'] = _cfgget(sec, 'pool_score_w_pending_timeout', M5_POOL_SCORE_W_PENDING_TIMEOUT, float)
+            globals()['M5_POOL_SCORE_W_LATENCY_GUARD'] = _cfgget(sec, 'pool_score_w_latency_guard', M5_POOL_SCORE_W_LATENCY_GUARD, float)
+            globals()['M5_POOL_SCORE_W_ASSET_CLOSED'] = _cfgget(sec, 'pool_score_w_asset_closed', M5_POOL_SCORE_W_ASSET_CLOSED, float)
+            globals()['M5_POOL_SCORE_W_WIN_TRADE'] = _cfgget(sec, 'pool_score_w_win_trade', M5_POOL_SCORE_W_WIN_TRADE, float)
+            globals()['M5_POOL_SCORE_W_LOSS_TRADE'] = _cfgget(sec, 'pool_score_w_loss_trade', M5_POOL_SCORE_W_LOSS_TRADE, float)
+            globals()['M5_POOL_SCORE_WINDOW_MINUTES'] = _cfgget(sec, 'pool_score_window_minutes', M5_POOL_SCORE_WINDOW_MINUTES, float)
+            # Dead-market detection (Donchian range)
+            globals()['M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD'] = _cfgget(sec, 'dead_market_donchian_period', M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD, int)
+            globals()['M5_POOL_DEAD_MARKET_RANGE_RATIO_THR'] = _cfgget(sec, 'dead_market_range_ratio_thr', M5_POOL_DEAD_MARKET_RANGE_RATIO_THR, float)
+            globals()['M5_POOL_DEAD_MARKET_PENALTY'] = _cfgget(sec, 'dead_market_penalty', M5_POOL_DEAD_MARKET_PENALTY, float)
+            # Universe-size-aware swap scaling
+            globals()['M5_POOL_SWAP_SCALE_WITH_UNIVERSE'] = _cfgbool(sec, 'pool_swap_scale_with_universe', M5_POOL_SWAP_SCALE_WITH_UNIVERSE)
+            globals()['M5_POOL_SWAP_UNIVERSE_DIVISOR'] = _cfgget(sec, 'pool_swap_universe_divisor', M5_POOL_SWAP_UNIVERSE_DIVISOR, int)
+            globals()['M5_POOL_SWAP_MAX_ABS'] = _cfgget(sec, 'pool_swap_max_abs', M5_POOL_SWAP_MAX_ABS, int)
         else:
             globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
 
@@ -2815,6 +2854,30 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0) -> List[Tup
     return result
 
 
+def _donchian_range_ratio_m5(ativo: str, period: int) -> Optional[float]:
+    """Calcula Donchian range ratio para detecção de mercado morto no M5.
+
+    Retorna (max_high - min_low) / mid_price nos últimos `period` candles M5.
+    Útil para identificar ativos com range muito comprimido ("mercado morto").
+    Retorna None quando não há dados suficientes (sem penalidade nesse caso).
+    """
+    try:
+        velas = get_candles_safe(ativo, 5 * 60, period + 3)
+        if not velas or len(velas) < period:
+            return None
+        recent = velas[-period:]
+        highs = [float(v['max']) for v in recent]
+        lows = [float(v['min']) for v in recent]
+        upper = max(highs)
+        lower = min(lows)
+        mid = (upper + lower) / 2
+        if mid == 0:
+            return None
+        return (upper - lower) / mid
+    except Exception:
+        return None
+
+
 def build_candidate_pool(use_otc: bool, limit: int = 200, tf_min: int = 0) -> List[Tuple[str, str]]:
     """Retorna todos os candidatos disponíveis exclusivamente do Ativos.txt.
 
@@ -3741,39 +3804,75 @@ def loop_patterns_multi(
             "expired": 0,
             "missed": 0,
             "blocked": 0,
+            "pending_timeout": 0,
+            "latency_guard": 0,
+            "asset_closed": 0,
+            "win_trade": 0,
+            "loss_trade": 0,
+            "freeze_skip": 0,
             "last_detected_ts": 0.0,
             "last_confirmed_ts": 0.0,
+            "events": deque(),  # (timestamp, event_type) for sliding-window scoring
         }
+
+    # Valid cumulative counter keys in the pool stats dict (excludes timestamps/deque)
+    _M5_POOL_EVENT_KEYS = frozenset({
+        "detected", "confirmed", "rejected", "expired", "missed", "blocked",
+        "pending_timeout", "latency_guard", "asset_closed", "win_trade",
+        "loss_trade", "freeze_skip",
+    })
 
     def _m5_track(event: str, ativo: str) -> None:
         """Record an operational event for a given asset (M5 pool scoring)."""
         s = m5_pool_stats.setdefault(ativo, _new_pool_stats())
         now_t = time.time()
+        # Update last-activity timestamps for dead-pool detection
         if event == "detected":
             s["detected"] += 1
             s["last_detected_ts"] = now_t
         elif event == "confirmed":
             s["confirmed"] += 1
             s["last_confirmed_ts"] = now_t
-        elif event == "rejected":
-            s["rejected"] += 1
-        elif event == "expired":
-            s["expired"] += 1
-        elif event == "missed":
-            s["missed"] += 1
-        elif event == "blocked":
-            s["blocked"] += 1
+        elif event in _M5_POOL_EVENT_KEYS:
+            s[event] += 1  # increment the known cumulative counter
+        # Append to sliding-window event queue
+        events_q: deque = s["events"]
+        events_q.append((now_t, event))
 
-    def _m5_score(ativo: str) -> float:
-        """Compute operational health score for an asset (higher = better)."""
+    def _m5_score(ativo: str, donchian_penalty: float = 0.0) -> float:
+        """Compute operational health score for an asset (higher = better).
+
+        Uses a sliding window of M5_POOL_SCORE_WINDOW_MINUTES for recent events.
+        An optional donchian_penalty is subtracted for dead-market detection.
+        """
         s = m5_pool_stats.get(ativo, {})
-        return (
-            s.get("confirmed", 0) * M5_POOL_SCORE_W_CONFIRMED
-            - (s.get("expired", 0) + s.get("rejected", 0)) * M5_POOL_SCORE_W_EXPIRED_REJECTED
-            - s.get("missed", 0) * M5_POOL_SCORE_W_MISSED
-            - s.get("blocked", 0) * M5_POOL_SCORE_W_BLOCKED
-            + (M5_POOL_SCORE_W_DETECTED if s.get("detected", 0) > 0 else 0.0)
+        if not s:
+            return 0.0
+        events_q: deque = s.get("events", deque())
+        if M5_POOL_SCORE_WINDOW_MINUTES > 0:
+            cutoff = time.time() - M5_POOL_SCORE_WINDOW_MINUTES * 60
+            w: Dict[str, int] = {}
+            for ts, ev in events_q:
+                if ts >= cutoff:
+                    w[ev] = w.get(ev, 0) + 1
+        else:
+            # No window: fall back to cumulative counters (only known event keys)
+            w = {k: s[k] for k in _M5_POOL_EVENT_KEYS if k in s}
+
+        score = (
+            w.get("confirmed", 0) * M5_POOL_SCORE_W_CONFIRMED
+            + w.get("win_trade", 0) * M5_POOL_SCORE_W_WIN_TRADE
+            + (M5_POOL_SCORE_W_DETECTED if w.get("detected", 0) > 0 else 0.0)
+            - (w.get("expired", 0) + w.get("rejected", 0)) * M5_POOL_SCORE_W_EXPIRED_REJECTED
+            - w.get("missed", 0) * M5_POOL_SCORE_W_MISSED
+            - w.get("blocked", 0) * M5_POOL_SCORE_W_BLOCKED
+            - w.get("pending_timeout", 0) * M5_POOL_SCORE_W_PENDING_TIMEOUT
+            - w.get("latency_guard", 0) * M5_POOL_SCORE_W_LATENCY_GUARD
+            - w.get("asset_closed", 0) * M5_POOL_SCORE_W_ASSET_CLOSED
+            - w.get("loss_trade", 0) * M5_POOL_SCORE_W_LOSS_TRADE
+            - donchian_penalty
         )
+        return score
 
     def _m5_pool_is_dead() -> bool:
         """Returns True when no asset in the pool had any activity for M5_POOL_DEAD_MINUTES.
@@ -3808,7 +3907,14 @@ def loop_patterns_multi(
                 pass
 
     def _rebalance_m5_pool() -> None:
-        """Periodic M5 pool rebalance: swap worst-scoring assets for better candidates."""
+        """Periodic M5 pool rebalance: swap worst-scoring assets for better candidates.
+
+        Melhorias:
+        - Registra universo total aberto, candidatos elegíveis e motivos de troca.
+        - Escala n_swap baseado no tamanho do universo (mais candidatos = mais trocas).
+        - Aplica penalidade Donchian para ativos com mercado comprimido.
+        - Score detalhado por motivo no log pool_rebalance_m5.log.
+        """
         nonlocal active_ativos, _last_m5_rebalance_ts
         now_t = time.time()
         if (now_t - _last_m5_rebalance_ts) < M5_POOL_REBALANCE_MINUTES * 60:
@@ -3818,19 +3924,6 @@ def loop_patterns_multi(
         is_dead = _m5_pool_is_dead()
         n_swap = M5_POOL_SWAP_MAX_DEAD if is_dead else M5_POOL_SWAP_MAX_NORMAL
         reason = "dead-market" if is_dead else "interval"
-
-        # Candidates for removal: assets without active pending signal, sorted worst first
-        # Secondary sort by name ensures deterministic tie-breaking.
-        swappable = [(a, c) for a, c in active_ativos if per_asset_pending.get(a) is None]
-        if not swappable:
-            _log_rebalance(
-                f"[REBALANCE M5] razão={reason} — nenhum ativo disponível para trocar "
-                f"(todos com pending ativo)."
-            )
-            return
-
-        scored = sorted(swappable, key=lambda ac: (_m5_score(ac[0]), ac[0]))
-        to_remove = scored[:n_swap]
 
         # Universe of replacement candidates
         try:
@@ -3847,10 +3940,59 @@ def loop_patterns_multi(
             and (now_t - m5_pool_cooldown.get(a.upper(), 0.0)) >= cooldown_secs
         ]
 
-        if not candidates:
+        # Universe-size-aware swap scaling: larger universe → more aggressive swaps
+        n_universe_total = len(universe)
+        n_in_pool = len(active_ativos)
+        n_external = len(candidates)
+        if M5_POOL_SWAP_SCALE_WITH_UNIVERSE and n_external > 0 and M5_POOL_SWAP_UNIVERSE_DIVISOR > 0:
+            extra = n_external // M5_POOL_SWAP_UNIVERSE_DIVISOR
+            n_swap = min(n_swap + extra, M5_POOL_SWAP_MAX_ABS)
+
+        # Candidates for removal: assets without active pending signal, sorted worst first
+        # Compute Donchian penalty for pool assets to improve removal scoring
+        swappable = [(a, c) for a, c in active_ativos if per_asset_pending.get(a) is None]
+        if not swappable:
             _log_rebalance(
-                f"[REBALANCE M5] razão={reason} — sem candidatos disponíveis no universo "
-                f"(cooldown ou todos já no pool). Nenhuma troca."
+                f"[REBALANCE M5] razão={reason} — nenhum ativo disponível para trocar "
+                f"(todos com pending ativo). "
+                f"universo={n_universe_total} elegíveis={n_external}"
+            )
+            return
+
+        # Compute Donchian penalty per swappable asset
+        donchian_penalties: Dict[str, float] = {}
+        for a, _ in swappable:
+            ratio = _donchian_range_ratio_m5(a, M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD)
+            if ratio is not None and ratio < M5_POOL_DEAD_MARKET_RANGE_RATIO_THR:
+                donchian_penalties[a] = M5_POOL_DEAD_MARKET_PENALTY
+            else:
+                donchian_penalties[a] = 0.0
+
+        scored = sorted(
+            swappable,
+            key=lambda ac: (_m5_score(ac[0], donchian_penalties.get(ac[0], 0.0)), ac[0])
+        )
+        to_remove = scored[:n_swap]
+
+        if not candidates:
+            # Build score summary for transparency even when no swap is possible
+            s_lines = []
+            for a, _ in active_ativos:
+                dp = donchian_penalties.get(a, 0.0)
+                sc = _m5_score(a, dp)
+                s = m5_pool_stats.get(a, {})
+                s_lines.append(
+                    f"  {display_asset_name(a)}: score={sc:.1f} "
+                    f"[det={s.get('detected', 0)} conf={s.get('confirmed', 0)} "
+                    f"exp={s.get('expired', 0)} rej={s.get('rejected', 0)} "
+                    f"miss={s.get('missed', 0)} blk={s.get('blocked', 0)} "
+                    f"pto={s.get('pending_timeout', 0)} lat={s.get('latency_guard', 0)} "
+                    f"don_pen={dp:.1f}]"
+                )
+            _log_rebalance(
+                f"[REBALANCE M5] razão={reason} — sem candidatos elegíveis no universo "
+                f"(universo={n_universe_total} pool={n_in_pool} cooldown={n_universe_total - n_in_pool - n_external}).\n"
+                + "\n".join(s_lines) + "\n  Nenhuma troca."
             )
             return
 
@@ -3858,29 +4000,34 @@ def loop_patterns_multi(
         to_remove = to_remove[:n_actual]
         to_add = candidates[:n_actual]
 
-        # Build score summary for logging
+        # Build detailed score summary for logging
         remove_set = {a for a, _ in to_remove}
         score_lines = []
         for a, _ in active_ativos:
-            sc = _m5_score(a)
+            dp = donchian_penalties.get(a, 0.0)
+            sc = _m5_score(a, dp)
             s = m5_pool_stats.get(a, {})
             tag_out = " ← SAINDO" if a in remove_set else ""
             score_lines.append(
                 f"  {display_asset_name(a)}: score={sc:.1f} "
                 f"[det={s.get('detected', 0)} conf={s.get('confirmed', 0)} "
                 f"exp={s.get('expired', 0)} rej={s.get('rejected', 0)} "
-                f"miss={s.get('missed', 0)} blk={s.get('blocked', 0)}]{tag_out}"
+                f"miss={s.get('missed', 0)} blk={s.get('blocked', 0)} "
+                f"pto={s.get('pending_timeout', 0)} lat={s.get('latency_guard', 0)} "
+                f"win={s.get('win_trade', 0)} loss={s.get('loss_trade', 0)} "
+                f"don_pen={dp:.1f}]{tag_out}"
             )
 
         msg = (
-            f"[REBALANCE M5] razão={reason} trocas={n_actual}\n"
+            f"[REBALANCE M5] razão={reason} trocas={n_actual} "
+            f"universo={n_universe_total} elegíveis={n_external} pool={n_in_pool}\n"
             + "\n".join(score_lines) + "\n"
             + "  Removidos: " + ", ".join(display_asset_name(a) for a, _ in to_remove) + "\n"
             + "  Adicionados: " + ", ".join(display_asset_name(a) for a, _ in to_add)
         )
         _log_rebalance(msg)
 
-        # Apply swaps — remove all at once (O(n+m)) then add new assets
+        # Apply swaps — remove all at once then add new assets
         for a, _ in to_remove:
             m5_pool_cooldown[a.upper()] = now_t
         active_ativos = [(av, cv) for av, cv in active_ativos if av not in remove_set]
@@ -3894,6 +4041,8 @@ def loop_patterns_multi(
     # M5 pending-first freeze state (persists across loop iterations)
     freeze_active: bool = False
     freeze_end_ts: float = 0.0
+    # Throttle freeze_skip logging per asset to avoid log spam on stale pendings
+    _freeze_skip_last_logged: Dict[str, float] = {}
 
     while True:
         # Verificação: limite de entradas aceitas atingido
@@ -3966,14 +4115,23 @@ def loop_patterns_multi(
                     f"— ativos: {freeze_names}"
                 )
             elif pending_assets and not eligible_pending_assets and not freeze_active:
-                # All pendings are stale — skip freeze, will be dropped per-asset below
+                # All pendings are stale — skip freeze, will be dropped per-asset below.
+                # Throttle logging to once per PENDING_MAX_AGE_SECONDS_M5 per asset
+                # to avoid spam when the stale condition persists across many cycles.
+                _skip_now = time.time()
+                _throttle_s = max(PENDING_MAX_AGE_SECONDS_M5, 30.0)
                 for a, _ in pending_assets:
-                    _log_blocked(
-                        "freeze_skip",
-                        f"ativo={a} tf={tf_min} "
-                        f"reason=all_pendings_stale "
-                        f"pend_max_age={PENDING_MAX_AGE_SECONDS_M5}"
-                    )
+                    _last_skip = _freeze_skip_last_logged.get(a, 0.0)
+                    if (_skip_now - _last_skip) >= _throttle_s:
+                        _log_blocked(
+                            "freeze_skip",
+                            f"ativo={a} tf={tf_min} "
+                            f"reason=all_pendings_stale "
+                            f"pend_max_age={PENDING_MAX_AGE_SECONDS_M5}"
+                        )
+                        if M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("freeze_skip", a)
+                        _freeze_skip_last_logged[a] = _skip_now
             elif freeze_active:
                 if not pending_assets:
                     freeze_active = False
@@ -4008,6 +4166,15 @@ def loop_patterns_multi(
 
             if not ativo_aberto(ativo, chave_preferida=ativo_chave):
                 _log_blocked("asset_closed", f"ativo={ativo} tf={tf_min}")
+                if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                    _m5_track("asset_closed", ativo)
+                    # Remove imediatamente do pool e entra em cooldown
+                    active_ativos = [(a, c) for a, c in active_ativos if a != ativo]
+                    m5_pool_cooldown[ativo.upper()] = time.time()
+                    _log_rebalance(
+                        f"[POOL M5] {display_asset_name(ativo)} removido imediatamente "
+                        f"(asset_closed). Cooldown={M5_POOL_ASSET_COOLDOWN_MINUTES:.0f}min."
+                    )
                 continue
 
             velas = get_candles_safe(ativo, period, CANDLES_LOOKBACK)
@@ -4037,6 +4204,8 @@ def loop_patterns_multi(
                             f"secs_elapsed={_pend_age:.1f} "
                             f"window={PENDING_MAX_AGE_SECONDS_M5}"
                         )
+                        if M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("pending_timeout", ativo)
                         per_asset_pending[ativo] = None
                         per_asset_pending_id[ativo] = None
                         per_asset_lock_until[ativo] = now_server + period
@@ -4094,6 +4263,8 @@ def loop_patterns_multi(
 
                     if BUY_LATENCY_AVG + BUY_LATENCY_MARGIN >= (win - sec):
                         _log_blocked("latency_guard", f"ativo={ativo} tf={tf_min}")
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("latency_guard", ativo)
                         per_asset_pending[ativo] = None
                         per_asset_pending_id[ativo] = None
                         per_asset_lock_until[ativo] = now_server + period
@@ -4229,11 +4400,15 @@ def loop_patterns_multi(
                             cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
                             + fmt_result_line(label, profit, method)
                         )
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("win_trade", ativo)
                     elif label == "loss":
                         console_event(
                             cred(f"❌ [{server_hhmmss()}] [{display_asset_name(ativo)}] ")
                             + fmt_result_line(label, profit, method)
                         )
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("loss_trade", ativo)
                     else:
                         console_event(
                             f"❓ [{server_hhmmss()}] [{display_asset_name(ativo)}] "
@@ -4447,11 +4622,14 @@ if __name__ == '__main__':
     _re_m5 = "on" if RESPIRO_ENABLE_M5 else "off"
     print(f'Keltner: M1={_ke_m1} M5={_ke_m5} | Pivot: M1={_pe_m1} M5={_pe_m5} | Respiro: M1={_re_m1} M5={_re_m5}')
     if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
+        _scale_label = f"univ_div={M5_POOL_SWAP_UNIVERSE_DIVISOR} max_abs={M5_POOL_SWAP_MAX_ABS}" if M5_POOL_SWAP_SCALE_WITH_UNIVERSE else "scale=off"
+        _don_label = f"don={M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD}c@{M5_POOL_DEAD_MARKET_RANGE_RATIO_THR:.3f} pen={M5_POOL_DEAD_MARKET_PENALTY:.1f}" if M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD > 0 else "donchian=off"
         print(
             f'Pool Dinâmico M5: ATIVO | rebalance={M5_POOL_REBALANCE_MINUTES:.0f}min '
             f'dead={M5_POOL_DEAD_MINUTES:.0f}min '
             f'swap_normal={M5_POOL_SWAP_MAX_NORMAL} swap_dead={M5_POOL_SWAP_MAX_DEAD} '
-            f'cooldown={M5_POOL_ASSET_COOLDOWN_MINUTES:.0f}min'
+            f'cooldown={M5_POOL_ASSET_COOLDOWN_MINUTES:.0f}min | '
+            f'{_scale_label} | {_don_label} | window={M5_POOL_SCORE_WINDOW_MINUTES:.0f}min'
         )
     elif TIMEFRAME_MINUTES == 5:
         print('Pool Dinâmico M5: desativado (pool_dynamic_enable=false)')

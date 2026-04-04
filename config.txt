@@ -244,17 +244,50 @@ pool_swap_max_dead           = 2
 # Cooldown (minutes) before a removed asset can re-enter the pool
 pool_asset_cooldown_minutes  = 30
 
+# --- Universe-size-aware swap scaling ---
+# When true, n_swap increases proportionally to the number of eligible external
+# candidates. This enables broader rotation when many assets are open (~20).
+# Formula: n_swap += len(eligible_candidates) // pool_swap_universe_divisor
+pool_swap_scale_with_universe = true
+pool_swap_universe_divisor    = 8
+# Absolute cap on swaps per rebalance cycle (regardless of scaling)
+pool_swap_max_abs             = 4
+
+# --- Scoring window ---
+# Rolling window in minutes for computing the per-asset score.
+# Only events within this window are counted. Set to 0 to use cumulative counts.
+pool_score_window_minutes    = 60
+
 # --- Scoring weights (higher asset score = better; adjust to taste) ---
 # Each confirmed signal adds this many points
 pool_score_w_confirmed       = 3.0
+# Each win trade adds this many points
+pool_score_w_win_trade       = 5.0
+# Bonus for having at least one detected event (avoids penalizing quiet assets)
+pool_score_w_detected        = 0.5
 # Each expired or rejected signal subtracts this many points
 pool_score_w_expired_rejected = 1.0
 # Each missed_early_entry subtracts this many points
 pool_score_w_missed          = 1.5
 # Each blocked event (regime filter) subtracts this many points
 pool_score_w_blocked         = 0.5
-# Bonus for having at least one detected event (avoids penalizing quiet assets)
-pool_score_w_detected        = 0.5
+# Each pending_timeout event subtracts this many points
+pool_score_w_pending_timeout = 2.0
+# Each latency_guard event subtracts this many points
+pool_score_w_latency_guard   = 1.0
+# Each asset_closed event subtracts this many points
+# (also triggers immediate removal from pool with cooldown)
+pool_score_w_asset_closed    = 3.0
+# Each loss trade subtracts this many points
+pool_score_w_loss_trade      = 1.0
+
+# --- Dead-market detection via Donchian range ---
+# Donchian range ratio = (highest_high - lowest_low) / mid_price over N candles.
+# Assets below dead_market_range_ratio_thr receive a score penalty at rebalance.
+# Set dead_market_donchian_period = 0 to disable Donchian-based scoring.
+dead_market_donchian_period  = 10
+dead_market_range_ratio_thr  = 0.002
+dead_market_penalty          = 5.0
 
 # =============================================================================
 # [M15]  — Placeholder para implementação futura (não ativo ainda)
