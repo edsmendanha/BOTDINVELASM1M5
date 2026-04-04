@@ -219,6 +219,44 @@ respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
 
 # =============================================================================
+# [M5] Dynamic Asset Pool Manager
+# =============================================================================
+# Enables automatic pool rotation for M5: every pool_rebalance_minutes the bot
+# scores all active assets by operational quality and swaps out the worst ones
+# for better candidates from the Ativos.txt universe.
+#
+# Safe default: false (preserves original behavior; set to true to activate).
+pool_dynamic_enable          = false
+
+# How often (minutes) to trigger a rebalance check
+pool_rebalance_minutes       = 15
+
+# Pool is considered "dead" if no detected/confirmed event occurred in this
+# many minutes across all pool assets — triggers a more aggressive swap.
+pool_dead_minutes            = 10
+
+# Max assets to swap per rebalance under normal conditions
+pool_swap_max_normal         = 1
+
+# Max assets to swap per rebalance when pool is "dead"
+pool_swap_max_dead           = 2
+
+# Cooldown (minutes) before a removed asset can re-enter the pool
+pool_asset_cooldown_minutes  = 30
+
+# --- Scoring weights (higher asset score = better; adjust to taste) ---
+# Each confirmed signal adds this many points
+pool_score_w_confirmed       = 3.0
+# Each expired or rejected signal subtracts this many points
+pool_score_w_expired_rejected = 1.0
+# Each missed_early_entry subtracts this many points
+pool_score_w_missed          = 1.5
+# Each blocked event (regime filter) subtracts this many points
+pool_score_w_blocked         = 0.5
+# Bonus for having at least one detected event (avoids penalizing quiet assets)
+pool_score_w_detected        = 0.5
+
+# =============================================================================
 # [M15]  — Placeholder para implementação futura (não ativo ainda)
 # =============================================================================
 # entry_mode             = reversal
