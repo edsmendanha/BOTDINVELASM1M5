@@ -3776,15 +3776,26 @@ def loop_patterns_multi(
         )
 
     def _m5_pool_is_dead() -> bool:
-        """Returns True when no asset in the pool had any activity for M5_POOL_DEAD_MINUTES."""
+        """Returns True when no asset in the pool had any activity for M5_POOL_DEAD_MINUTES.
+
+        Returns False for an empty pool (nothing to conclude yet) and for assets
+        that have never been observed (no stats recorded), to avoid spurious
+        dead-market swaps right at startup.
+        """
+        if not active_ativos:
+            return False
         dead_secs = M5_POOL_DEAD_MINUTES * 60
         now_t = time.time()
+        has_any_stats = False
         for a, _ in active_ativos:
             s = m5_pool_stats.get(a, {})
             last_act = max(s.get("last_detected_ts", 0.0), s.get("last_confirmed_ts", 0.0))
-            if last_act > 0 and (now_t - last_act) <= dead_secs:
-                return False
-        return True
+            if last_act > 0:
+                has_any_stats = True
+                if (now_t - last_act) <= dead_secs:
+                    return False
+        # If no asset has ever had any activity recorded, pool is too young to be called dead
+        return has_any_stats
 
     def _log_rebalance(msg: str) -> None:
         """Print rebalance event and append to pool_rebalance_m5.log."""
@@ -3809,6 +3820,7 @@ def loop_patterns_multi(
         reason = "dead-market" if is_dead else "interval"
 
         # Candidates for removal: assets without active pending signal, sorted worst first
+        # Secondary sort by name ensures deterministic tie-breaking.
         swappable = [(a, c) for a, c in active_ativos if per_asset_pending.get(a) is None]
         if not swappable:
             _log_rebalance(
@@ -3817,7 +3829,7 @@ def loop_patterns_multi(
             )
             return
 
-        scored = sorted(swappable, key=lambda ac: _m5_score(ac[0]))
+        scored = sorted(swappable, key=lambda ac: (_m5_score(ac[0]), ac[0]))
         to_remove = scored[:n_swap]
 
         # Universe of replacement candidates
@@ -3847,11 +3859,12 @@ def loop_patterns_multi(
         to_add = candidates[:n_actual]
 
         # Build score summary for logging
+        remove_set = {a for a, _ in to_remove}
         score_lines = []
         for a, _ in active_ativos:
             sc = _m5_score(a)
             s = m5_pool_stats.get(a, {})
-            tag_out = " ← SAINDO" if any(av == a for av, _ in to_remove) else ""
+            tag_out = " ← SAINDO" if a in remove_set else ""
             score_lines.append(
                 f"  {display_asset_name(a)}: score={sc:.1f} "
                 f"[det={s.get('detected', 0)} conf={s.get('confirmed', 0)} "
@@ -3867,10 +3880,10 @@ def loop_patterns_multi(
         )
         _log_rebalance(msg)
 
-        # Apply swaps
+        # Apply swaps — remove all at once (O(n+m)) then add new assets
         for a, _ in to_remove:
-            active_ativos = [(av, cv) for av, cv in active_ativos if av != a]
             m5_pool_cooldown[a.upper()] = now_t
+        active_ativos = [(av, cv) for av, cv in active_ativos if av not in remove_set]
 
         for a, c in to_add:
             active_ativos.append((a, c))
