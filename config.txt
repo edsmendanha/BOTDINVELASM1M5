@@ -246,7 +246,7 @@ pool_asset_cooldown_minutes  = 30
 
 # --- Universe-size-aware swap scaling ---
 # When true, n_swap increases proportionally to the number of eligible external
-# candidates. This enables broader rotation when many ativos estão abertos (~20).
+# candidates. This enables broader rotation when many assets are open (~20).
 # Formula: n_swap += len(eligible_candidates) // pool_swap_universe_divisor
 pool_swap_scale_with_universe = true
 pool_swap_universe_divisor    = 8

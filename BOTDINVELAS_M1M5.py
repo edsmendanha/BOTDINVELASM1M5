@@ -3815,6 +3815,13 @@ def loop_patterns_multi(
             "events": deque(),  # (timestamp, event_type) for sliding-window scoring
         }
 
+    # Valid cumulative counter keys in the pool stats dict (excludes timestamps/deque)
+    _M5_POOL_EVENT_KEYS = frozenset({
+        "detected", "confirmed", "rejected", "expired", "missed", "blocked",
+        "pending_timeout", "latency_guard", "asset_closed", "win_trade",
+        "loss_trade", "freeze_skip",
+    })
+
     def _m5_track(event: str, ativo: str) -> None:
         """Record an operational event for a given asset (M5 pool scoring)."""
         s = m5_pool_stats.setdefault(ativo, _new_pool_stats())
@@ -3826,10 +3833,10 @@ def loop_patterns_multi(
         elif event == "confirmed":
             s["confirmed"] += 1
             s["last_confirmed_ts"] = now_t
-        elif event in s:
-            s[event] += 1  # increment any known cumulative counter
+        elif event in _M5_POOL_EVENT_KEYS:
+            s[event] += 1  # increment the known cumulative counter
         # Append to sliding-window event queue
-        events_q: deque = s.setdefault("events", deque())
+        events_q: deque = s["events"]
         events_q.append((now_t, event))
 
     def _m5_score(ativo: str, donchian_penalty: float = 0.0) -> float:
@@ -3849,8 +3856,8 @@ def loop_patterns_multi(
                 if ts >= cutoff:
                     w[ev] = w.get(ev, 0) + 1
         else:
-            # No window: fall back to cumulative counters
-            w = {k: v for k, v in s.items() if isinstance(v, int)}
+            # No window: fall back to cumulative counters (only known event keys)
+            w = {k: s[k] for k in _M5_POOL_EVENT_KEYS if k in s}
 
         score = (
             w.get("confirmed", 0) * M5_POOL_SCORE_W_CONFIRMED
