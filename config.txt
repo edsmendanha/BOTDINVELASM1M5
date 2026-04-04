@@ -28,11 +28,11 @@ allow_otc_live = false
 [SLEEP]
 # =============================================================================
 idle_sleep_m1    = 0.20
-idle_sleep_m5    = 1.50
+idle_sleep_m5    = 0.80
 pending_sleep_m1 = 0.25
-pending_sleep_m5 = 1.10
+pending_sleep_m5 = 0.50
 # Fast poll interval used during M5 freeze window (pending-first mode)
-pending_freeze_poll_sleep_m5 = 0.30
+pending_freeze_poll_sleep_m5 = 0.15
 
 # =============================================================================
 [RISK]
@@ -156,9 +156,9 @@ bb_period           = 20
 bb_std              = 2.0
 bb_width_min        = 0.00070
 slope_lookback      = 8
-slope_min           = 0.00012
+slope_min           = 0.00006
 
-entry_window_seconds = 25
+entry_window_seconds = 20
 
 # Máximo de ativos simultâneos para M5 (padrão: 4)
 max_assets = 4
@@ -190,13 +190,13 @@ m5_extreme_frac    = 0.20
 
 # Freeze window: when pending signal detected, focus only on that asset for N seconds
 # 0 = disable freeze (reverts to original round-robin behavior)
-pending_freeze_seconds_m5 = 6
+pending_freeze_seconds_m5 = 2
 
 # Max age (seconds) for a pending M5 signal before it is dropped instead of retrying.
 # Prevents repeated freeze/timeout loops on stale pendings. Default aligns with entry
 # window so that late-arriving confirmations are discarded cleanly.
 # 0 = disable (rely only on PENDING_EXPIRE_CANDLES TTL from confirm_pending)
-pending_max_age_seconds_m5 = 45
+pending_max_age_seconds_m5 = 15
 
 # --- Canal Keltner ---
 keltner_enable = true
