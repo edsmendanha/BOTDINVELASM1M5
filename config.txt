@@ -134,6 +134,18 @@ respiro_max_pullback_candles = 3
 respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
 
+# --- Estratégia ARM + SNIPER 0–5s ---
+# Quando sniper_mode=true, o bot arma o sinal na vela fechada (arm_score_min mais alto)
+# e executa SOMENTE nos primeiros sniper_window_seconds após abertura da vela alvo.
+# Filtro anti-fakeout primário: CALL preço>=open | PUT preço<=open da vela atual.
+# sniper_antifakeout_extreme=true também bloqueia violação do extremo da vela anterior.
+# Defaults: false (modo desativado — mantém comportamento V15 confirm-pending original).
+sniper_mode                  = false
+arm_score_min                = 60
+fallback_arm_score_min       = 55
+sniper_window_seconds        = 5
+sniper_antifakeout_extreme   = false
+
 # =============================================================================
 [M5]
 # =============================================================================
@@ -224,6 +236,18 @@ respiro_pullback_max_frac    = 0.618
 respiro_max_pullback_candles = 3
 respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
+
+# --- Estratégia ARM + SNIPER 0–5s (M5) ---
+# Quando sniper_mode=true, o bot arma o sinal na vela fechada com score elevado
+# (arm_score_min) e executa SOMENTE nos primeiros sniper_window_seconds após a
+# abertura da vela alvo. Anti-fakeout: CALL preço>=open | PUT preço<=open.
+# sniper_antifakeout_extreme=true bloqueia também violação do extremo anterior.
+# Defaults: false (mantém comportamento V15 confirm-pending original).
+sniper_mode                  = false
+arm_score_min                = 65
+fallback_arm_score_min       = 60
+sniper_window_seconds        = 5
+sniper_antifakeout_extreme   = false
 
 # =============================================================================
 # [M5] Dynamic Asset Pool Manager

@@ -356,6 +356,26 @@ V15_SCORE_GAP_MIN_M5: int = 1
 V15_CONFIRM_POLLS_M1: int = 1
 V15_CONFIRM_POLLS_M5: int = 1
 
+# =========================
+# ARM + SNIPER 0–5s (por TF)
+# Quando sniper_mode=true:
+#   Fase ARM  — arma o sinal na vela fechada com score mínimo elevado (arm_score_min).
+#   Fase EXEC — executa SOMENTE nos primeiros SNIPER_WINDOW_SECONDS após a abertura
+#               da vela alvo, com filtro anti-fakeout (preço vs open da vela atual).
+# =========================
+SNIPER_MODE_M1: bool = False
+SNIPER_MODE_M5: bool = False
+ARM_SCORE_MIN_M1: int = 60    # score mínimo V15 para ARM em M1 (mercado aberto)
+ARM_SCORE_MIN_M5: int = 65    # score mínimo V15 para ARM em M5 (mercado aberto)
+FALLBACK_ARM_SCORE_MIN_M1: int = 55  # score mínimo para fallback (harami/hammer/engolfo)
+FALLBACK_ARM_SCORE_MIN_M5: int = 60
+SNIPER_WINDOW_SECONDS: int = 5         # janela rígida de execução padrão (fallback; usar SNIPER_WINDOW_SECONDS_M1/M5)
+SNIPER_WINDOW_SECONDS_M1: int = 5
+SNIPER_WINDOW_SECONDS_M5: int = 5
+SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # fallback; usar SNIPER_ANTIFAKEOUT_EXTREME_M1/M5
+SNIPER_ANTIFAKEOUT_EXTREME_M1: bool = False
+SNIPER_ANTIFAKEOUT_EXTREME_M5: bool = False
+
 
 def _load_from_config() -> None:
     """Carrega todos os parâmetros de estratégia do config.txt e sobrescreve os globals.
@@ -409,6 +429,10 @@ def _load_from_config() -> None:
     global M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD, M5_POOL_DEAD_MARKET_RANGE_RATIO_THR
     global M5_POOL_DEAD_MARKET_PENALTY
     global M5_POOL_SWAP_SCALE_WITH_UNIVERSE, M5_POOL_SWAP_UNIVERSE_DIVISOR, M5_POOL_SWAP_MAX_ABS
+    global SNIPER_MODE_M1, SNIPER_MODE_M5, ARM_SCORE_MIN_M1, ARM_SCORE_MIN_M5
+    global FALLBACK_ARM_SCORE_MIN_M1, FALLBACK_ARM_SCORE_MIN_M5
+    global SNIPER_WINDOW_SECONDS, SNIPER_WINDOW_SECONDS_M1, SNIPER_WINDOW_SECONDS_M5
+    global SNIPER_ANTIFAKEOUT_EXTREME, SNIPER_ANTIFAKEOUT_EXTREME_M1, SNIPER_ANTIFAKEOUT_EXTREME_M5
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
@@ -536,6 +560,18 @@ def _load_from_config() -> None:
             globals()['M5_POOL_SWAP_MAX_ABS'] = _cfgget(sec, 'pool_swap_max_abs', M5_POOL_SWAP_MAX_ABS, int)
         else:
             globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
+
+        # ARM + SNIPER 0–5s — carregado para ambas as TFs
+        _sniper_key = 'SNIPER_MODE_M5' if is_m5 else 'SNIPER_MODE_M1'
+        _arm_key    = 'ARM_SCORE_MIN_M5' if is_m5 else 'ARM_SCORE_MIN_M1'
+        _fb_arm_key = 'FALLBACK_ARM_SCORE_MIN_M5' if is_m5 else 'FALLBACK_ARM_SCORE_MIN_M1'
+        _sw_key     = 'SNIPER_WINDOW_SECONDS_M5' if is_m5 else 'SNIPER_WINDOW_SECONDS_M1'
+        _afe_key    = 'SNIPER_ANTIFAKEOUT_EXTREME_M5' if is_m5 else 'SNIPER_ANTIFAKEOUT_EXTREME_M1'
+        globals()[_sniper_key] = _cfgbool(sec, 'sniper_mode', globals()[_sniper_key])
+        globals()[_arm_key]    = _cfgget(sec, 'arm_score_min', globals()[_arm_key], int)
+        globals()[_fb_arm_key] = _cfgget(sec, 'fallback_arm_score_min', globals()[_fb_arm_key], int)
+        globals()[_sw_key]     = _cfgget(sec, 'sniper_window_seconds', globals()[_sw_key], int)
+        globals()[_afe_key]    = _cfgbool(sec, 'sniper_antifakeout_extreme', globals()[_afe_key])
 
         # Keltner
         ke_key = 'KELTNER_ENABLE_M5' if is_m5 else 'KELTNER_ENABLE_M1'
@@ -2089,6 +2125,15 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
     pivot_right     = PIVOT_RIGHT_M5     if is_m5 else PIVOT_RIGHT_M1
     pivot_prox_pct  = PIVOT_PROXIMITY_PCT_M5 if is_m5 else PIVOT_PROXIMITY_PCT_M1
 
+    # --- ARM + SNIPER: score elevado e modo de execução diferenciado ---
+    sniper_mode_tf           = SNIPER_MODE_M5           if is_m5 else SNIPER_MODE_M1
+    arm_score_min_tf         = ARM_SCORE_MIN_M5         if is_m5 else ARM_SCORE_MIN_M1
+    fallback_arm_score_min_tf = FALLBACK_ARM_SCORE_MIN_M5 if is_m5 else FALLBACK_ARM_SCORE_MIN_M1
+    # Em modo sniper, usa arm_score_min (mais alto) para compensar remoção da confirmação intra-vela
+    effective_score_min      = arm_score_min_tf if sniper_mode_tf else v15_score_min
+    # Tag de pattern_mode: "arm_sniper" em sniper mode, "v15" caso contrário
+    _pattern_mode_tag        = "arm_sniper"     if sniper_mode_tf else "v15"
+
     # --- Modo Continuação (Respiro) ---
     if entry_mode_tf == "continuation":
         return _detect_respiro(tf_min, velas)
@@ -2201,8 +2246,10 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
         "pivot_prox": pivot_prox_str,
     }
 
-    # ── Disparo do sinal V15 ───────────────────────────────────────────────
-    if call_score >= v15_score_min and (call_score - put_score) >= v15_gap_min:
+    # ── Disparo do sinal V15 / ARM ─────────────────────────────────────────
+    # Em modo sniper: usa effective_score_min (arm_score_min > v15_score_min) e
+    # marca pattern_mode="arm_sniper" para a fase EXEC (0–5s após abertura).
+    if call_score >= effective_score_min and (call_score - put_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("call", velas):
             return None
         elif tf_min == 1 and not _m1_structural_filter("call", velas):
@@ -2215,10 +2262,10 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             "expected_confirm_from": expected_confirm_from,
             "v15_score": call_score,
             "v15_confirm_count": 0,
-            "pattern_mode": "v15",
+            "pattern_mode": _pattern_mode_tag,
             **_score_components,
         }
-    if put_score >= v15_score_min and (put_score - call_score) >= v15_gap_min:
+    if put_score >= effective_score_min and (put_score - call_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("put", velas):
             return None
         elif tf_min == 1 and not _m1_structural_filter("put", velas):
@@ -2231,15 +2278,18 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             "expected_confirm_from": expected_confirm_from,
             "v15_score": put_score,
             "v15_confirm_count": 0,
-            "pattern_mode": "v15",
+            "pattern_mode": _pattern_mode_tag,
             **_score_components,
         }
 
     # ── Fallback v14: Harami / Hammer / Engolfo / Pinça ───────────────────
     _best_score = max(call_score, put_score)
-    _fallback_m1_ok = (tf_min != 1) or (_best_score >= V15_FALLBACK_NEAR_SCORE_M1)
+    # Em modo sniper o fallback também usa score mínimo elevado (fallback_arm_score_min)
+    _fallback_score_min = fallback_arm_score_min_tf if sniper_mode_tf else V15_FALLBACK_NEAR_SCORE_M1
+    _fallback_m1_ok = (tf_min != 1) or (_best_score >= _fallback_score_min)
 
-    _score_components_fb = {**_score_components, "pattern_mode": "fallback", "strategy": "fallback"}
+    # Fallback em modo sniper: execução via arm_sniper (entrada na abertura da próxima vela)
+    _score_components_fb = {**_score_components, "pattern_mode": _pattern_mode_tag, "strategy": "fallback"}
 
     if is_harami_bearish(c_prev, c_last) or is_engulfing_bearish(c_prev, c_last) or is_tweezer_top(c_prev, c_last):
         if not _fallback_m1_ok:
@@ -2332,6 +2382,65 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
     now_server = int(API.get_server_timestamp())
     if now_server >= expire_from + 2:
         return "expired", None
+
+    # ─── Confirmação ARM + SNIPER (0–5s): entra na abertura da vela alvo ──
+    # Não depende de confirmação intra-vela: executa imediatamente ao abrir a
+    # vela alvo (expected_confirm_from), dentro da janela SNIPER_WINDOW_SECONDS.
+    # Filtro anti-fakeout: preço atual vs open da vela alvo.
+    if pattern_mode == "arm_sniper":
+        # Aguarda abertura da vela alvo
+        if now_server < expected_confirm_from:
+            return "waiting", None
+
+        # Validade: apenas durante a vela alvo; expira ao abrir a vela seguinte
+        if now_server >= expected_confirm_from + period:
+            return "expired", None
+
+        # Janela SNIPER (por TF): rejeitar se passou do limite após abertura
+        _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+        secs_from_open = now_server - expected_confirm_from
+        if secs_from_open > _sniper_win:
+            return "rejected", None
+
+        # Busca a vela alvo (em formação: velas[-1] quando API já a entregou)
+        c_target = velas[-1] if velas else None
+        if c_target is None:
+            return "waiting", None
+
+        # Se a API ainda não entregou a vela alvo, aguardar próximo tick
+        if int(c_target.get("from", -1)) != expected_confirm_from:
+            return "waiting", None
+
+        open_candle   = float(c_target.get("open", 0))
+        current_price = float(c_target.get("close", open_candle))
+
+        if open_candle == 0:
+            return "waiting", None
+
+        # Anti-fakeout primário: preço deve confirmar direção vs abertura
+        # CALL: preço >= open  |  PUT: preço <= open
+        if direction_hint == "call":
+            antifakeout_ok = current_price >= open_candle
+        else:
+            antifakeout_ok = current_price <= open_candle
+
+        if not antifakeout_ok:
+            # Ainda dentro da janela — aguardar próximo tick
+            return "waiting", None
+
+        # Anti-fakeout opcional (por TF): não violar extremo da vela anterior
+        _afe_extreme = SNIPER_ANTIFAKEOUT_EXTREME_M5 if tf_min == 5 else SNIPER_ANTIFAKEOUT_EXTREME_M1
+        if _afe_extreme:
+            c_pat = _find_candle_by_from(velas, pattern_from)
+            if c_pat is not None:
+                if direction_hint == "call":
+                    if current_price < float(c_pat.get("min", current_price)):
+                        return "waiting", None
+                else:
+                    if current_price > float(c_pat.get("max", current_price)):
+                        return "waiting", None
+
+        return "confirmed", direction_hint
 
     c_pattern = _find_candle_by_from(velas, pattern_from)
     if c_pattern is None:
@@ -4441,168 +4550,206 @@ def loop_patterns_multi(
             _bs_score, _bs_sec, _bs_ativo, _bs_chave, _bs_dir, _bs_pend, _bs_d2c = confirmed_this_cycle[0]
             _bs_patt = _bs_pend["pattern_name"]
 
-            saldo_before = get_available_balance() or 0.0
-            amount_to_use = compute_amount(saldo_before)
-            secs_left = seconds_left_in_period(tf_min)
-
-            # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC)
-            trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=use_otc)
-            market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
-
-            console_event(
-                f"🕯️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Sinal confirmado: {_bs_patt} | "
-                f"⏱️ det→conf={_bs_d2c} | "
-                f"Entrada: {cgreen('CALL 📈') if _bs_dir == 'call' else cred('PUT 📉')} | "
-                f"${amount_to_use:.2f} | "
-                f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
-                f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
-            )
-
-            _buy_start_ts = time.time()
-            result_container: Dict[str, Any] = {}
-            ev = threading.Event()
-            if USE_BUY_THREAD:
-                t = threading.Thread(
-                    target=_buy_worker,
-                    args=(_bs_dir, trade_ativo, amount_to_use, expiration, result_container, ev, trade_chave),
-                    daemon=True
-                )
-                t.start()
-                ev.wait(timeout=25.0)
-            else:
-                status_b, info_b = _do_buy_minimal(amount_to_use, trade_ativo, _bs_dir, expiration, trade_chave)
-                result_container["res"] = {
-                    "success": bool(status_b),
-                    "order_id": info_b if status_b else None,
-                    "info": info_b,
-                }
-            _buy_elapsed = f"{time.time() - _buy_start_ts:.2f}s"
-
-            res = result_container.get("res", {})
-            if not res.get("success"):
-                if trade_chave == 'digital':
-                    console_event(
-                        cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
-                        f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback...")
+            # ARM + SNIPER: re-verificar que a janela de 0–5s não expirou entre a
+            # confirmação e este ponto (o loop por ativos pode levar alguns segundos).
+            _bs_pend_mode = _bs_pend.get("pattern_mode", "v15")
+            _sniper_abort = False
+            if _bs_pend_mode == "arm_sniper":
+                _ecf_buy = int(_bs_pend.get("expected_confirm_from", 0))
+                _secs_in_at_buy = now_server - _ecf_buy
+                _sniper_win_buy = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+                if _secs_in_at_buy > _sniper_win_buy:
+                    _log_blocked(
+                        "sniper_window_expired_at_buy",
+                        f"ativo={_bs_ativo} tf={tf_min} "
+                        f"secs_in={_secs_in_at_buy} window={_sniper_win_buy}",
                     )
-                else:
-                    console_event(
-                        cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Falha ao enviar ordem.")
+                    _log_sinal(
+                        _bs_ativo, tf_min, "sniper_window_expired_at_buy", _bs_pend,
+                        block_reason="sniper_window_expired_at_buy",
+                        details=f"secs_in={_secs_in_at_buy}",
                     )
-                # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
-                if trade_chave == 'digital':
-                    fb_name, fb_chave = find_preferred_variant_with_rules(
-                        _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', _bs_ativo.upper())),
-                        allow_otc=use_otc
-                    )
-                    if fb_name and fb_chave and fb_chave != 'digital':
-                        fb_container: Dict[str, Any] = {}
-                        fb_ev = threading.Event()
-                        if USE_BUY_THREAD:
-                            fb_t = threading.Thread(
-                                target=_buy_worker,
-                                args=(_bs_dir, fb_name, amount_to_use, expiration, fb_container, fb_ev, fb_chave),
-                                daemon=True
-                            )
-                            fb_t.start()
-                            fb_ev.wait(timeout=25.0)
-                        else:
-                            fb_s, fb_i = _do_buy_minimal(amount_to_use, fb_name, _bs_dir, expiration, fb_chave)
-                            fb_container["res"] = {"success": bool(fb_s), "order_id": fb_i if fb_s else None, "info": fb_i}
-                        fb_res = fb_container.get("res", {})
-                        if fb_res.get("success"):
-                            res = fb_res
-                            trade_ativo = fb_name
-                            trade_chave = fb_chave
-                            market_type_label = "BINÁRIA"
-                            console_event(
-                                ccyan(f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}")
-                            )
-                if not res.get("success"):
                     per_asset_pending[_bs_ativo] = None
                     per_asset_pending_id[_bs_ativo] = None
-                    _replace_asset(_bs_ativo)
-            else:
-                # Chegamos aqui apenas quando res.get("success") é True
-                order_id = res.get("order_id")
-                if order_id is not None:
-                    entries_accepted += 1
-                    # Log compacto apenas de entradas efetivamente emitidas
-                    _log_sinal_confirmado(
-                        _bs_ativo, tf_min, _bs_dir, _bs_pend,
-                        entra_em_ts=_bs_pend.get("expected_confirm_from"),
-                    )
+                    per_asset_lock_until[_bs_ativo] = now_server + period
+                    _sniper_abort = True
+
+            if not _sniper_abort:
+                saldo_before = get_available_balance() or 0.0
+                amount_to_use = compute_amount(saldo_before)
+                secs_left = seconds_left_in_period(tf_min)
+
+                # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC)
+                trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=use_otc)
+                market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
+
                 console_event(
-                    ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Ordem aceita ({market_type_label}) | "
-                    f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
-                    f"Entradas: {entries_accepted}"
-                    + (f"/{max_entries}" if max_entries > 0 else "/∞"))
-                )
-                console_event(
-                    f"⏳ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Aguardando resultado..."
-                )
-
-                t0 = time.time()
-                min_wait = expiration * 60 + RESULT_DELAY_AFTER_EXPIRY_SECONDS
-                while time.time() - t0 < min_wait:
-                    time.sleep(0.5)
-
-                timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
-                timeout = max(35, timeout)
-
-                result = check_order_result(
-                    order_id, amount_to_use,
-                    saldo_before=saldo_before,
-                    timeout_seconds=timeout,
-                    poll_interval=2.0,
+                    f"🕯️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Sinal confirmado: {_bs_patt} | "
+                    f"⏱️ det→conf={_bs_d2c} | "
+                    f"Entrada: {cgreen('CALL 📈') if _bs_dir == 'call' else cred('PUT 📉')} | "
+                    f"${amount_to_use:.2f} | "
+                    f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
+                    f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
                 )
 
-                label = result.get("result", "unknown")
-                profit = result.get("profit")
-                bal_after = result.get("balance_after")
-                method = result.get("method")
-
-                if label == "win":
-                    console_event(
-                        cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
-                        + fmt_result_line(label, profit, method)
+                _buy_start_ts = time.time()
+                result_container: Dict[str, Any] = {}
+                ev = threading.Event()
+                if USE_BUY_THREAD:
+                    t = threading.Thread(
+                        target=_buy_worker,
+                        args=(_bs_dir, trade_ativo, amount_to_use, expiration, result_container, ev, trade_chave),
+                        daemon=True
                     )
-                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
-                        _m5_track("win_trade", _bs_ativo)
-                elif label == "loss":
-                    console_event(
-                        cred(f"❌ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
-                        + fmt_result_line(label, profit, method)
-                    )
-                    if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
-                        _m5_track("loss_trade", _bs_ativo)
+                    t.start()
+                    ev.wait(timeout=25.0)
                 else:
+                    status_b, info_b = _do_buy_minimal(amount_to_use, trade_ativo, _bs_dir, expiration, trade_chave)
+                    result_container["res"] = {
+                        "success": bool(status_b),
+                        "order_id": info_b if status_b else None,
+                        "info": info_b,
+                    }
+                _buy_elapsed = f"{time.time() - _buy_start_ts:.2f}s"
+
+                res = result_container.get("res", {})
+                if not res.get("success"):
+                    if trade_chave == 'digital':
+                        console_event(
+                            cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
+                            f"Falha ao enviar ordem (DIGITAL). Tentando binária como fallback...")
+                        )
+                    else:
+                        console_event(
+                            cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Falha ao enviar ordem.")
+                        )
+                    # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
+                    if trade_chave == 'digital':
+                        fb_name, fb_chave = find_preferred_variant_with_rules(
+                            _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', _bs_ativo.upper())),
+                            allow_otc=use_otc
+                        )
+                        if fb_name and fb_chave and fb_chave != 'digital':
+                            # Em modo sniper, verificar se ainda há janela antes do fallback binário
+                            _fb_sniper_ok = True
+                            if _bs_pend_mode == "arm_sniper":
+                                _ecf_fb = int(_bs_pend.get("expected_confirm_from", 0))
+                                _secs_fb = now_server - _ecf_fb
+                                _sniper_win_fb = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+                                if _secs_fb > _sniper_win_fb:
+                                    _log_blocked(
+                                        "sniper_window_expired_at_fallback_buy",
+                                        f"ativo={_bs_ativo} tf={tf_min} secs_fb={_secs_fb}",
+                                    )
+                                    _fb_sniper_ok = False
+                            if _fb_sniper_ok:
+                                fb_container: Dict[str, Any] = {}
+                                fb_ev = threading.Event()
+                                if USE_BUY_THREAD:
+                                    fb_t = threading.Thread(
+                                        target=_buy_worker,
+                                        args=(_bs_dir, fb_name, amount_to_use, expiration, fb_container, fb_ev, fb_chave),
+                                        daemon=True
+                                    )
+                                    fb_t.start()
+                                    fb_ev.wait(timeout=25.0)
+                                else:
+                                    fb_s, fb_i = _do_buy_minimal(amount_to_use, fb_name, _bs_dir, expiration, fb_chave)
+                                    fb_container["res"] = {"success": bool(fb_s), "order_id": fb_i if fb_s else None, "info": fb_i}
+                                fb_res = fb_container.get("res", {})
+                                if fb_res.get("success"):
+                                    res = fb_res
+                                    trade_ativo = fb_name
+                                    trade_chave = fb_chave
+                                    market_type_label = "BINÁRIA"
+                                    console_event(
+                                        ccyan(f"✅ [{server_hhmmss()}] Fallback BINÁRIA aceito: {display_asset_name(fb_name)}")
+                                    )
+                    if not res.get("success"):
+                        per_asset_pending[_bs_ativo] = None
+                        per_asset_pending_id[_bs_ativo] = None
+                        _replace_asset(_bs_ativo)
+                else:
+                    # Chegamos aqui apenas quando res.get("success") é True
+                    order_id = res.get("order_id")
+                    if order_id is not None:
+                        entries_accepted += 1
+                        # Log compacto apenas de entradas efetivamente emitidas
+                        _log_sinal_confirmado(
+                            _bs_ativo, tf_min, _bs_dir, _bs_pend,
+                            entra_em_ts=_bs_pend.get("expected_confirm_from"),
+                        )
                     console_event(
-                        f"❓ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
-                        f"{fmt_result_line(label, profit, method)}"
+                        ccyan(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Ordem aceita ({market_type_label}) | "
+                        f"ID: {order_id} | ⏱️ conf→aceita={_buy_elapsed} | "
+                        f"Entradas: {entries_accepted}"
+                        + (f"/{max_entries}" if max_entries > 0 else "/∞"))
+                    )
+                    console_event(
+                        f"⏳ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Aguardando resultado..."
                     )
 
-                try:
-                    if TRADES_CSV is not None:
-                        with TRADES_CSV.open('a', newline='', encoding='utf-8') as f:
-                            csv.writer(f).writerow([
-                                now_iso(), INSTANCE_TAG,
-                                _bs_ativo, tf_min, ENTRY_MODE, RIGIDEZ_MODE,
-                                _bs_dir, order_id,
-                                method, label, float(profit) if profit is not None else "",
-                                saldo_before, bal_after if bal_after is not None else "",
-                                amount_to_use, f"{BUY_LATENCY_AVG:.6f}",
-                                _bs_patt, _bs_pend.get("pattern_from"),
-                                secs_left,
-                                trade_ativo, trade_chave,
-                                _bs_pend.get("strategy", ""),
-                            ])
-                except Exception:
-                    pass
+                    t0 = time.time()
+                    min_wait = expiration * 60 + RESULT_DELAY_AFTER_EXPIRY_SECONDS
+                    while time.time() - t0 < min_wait:
+                        time.sleep(0.5)
 
-                per_asset_pending[_bs_ativo] = None
-                per_asset_pending_id[_bs_ativo] = None
-                per_asset_lock_until[_bs_ativo] = now_server + period
+                    timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
+                    timeout = max(35, timeout)
+
+                    result = check_order_result(
+                        order_id, amount_to_use,
+                        saldo_before=saldo_before,
+                        timeout_seconds=timeout,
+                        poll_interval=2.0,
+                    )
+
+                    label = result.get("result", "unknown")
+                    profit = result.get("profit")
+                    bal_after = result.get("balance_after")
+                    method = result.get("method")
+
+                    if label == "win":
+                        console_event(
+                            cgreen(f"✅ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
+                            + fmt_result_line(label, profit, method)
+                        )
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("win_trade", _bs_ativo)
+                    elif label == "loss":
+                        console_event(
+                            cred(f"❌ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] ")
+                            + fmt_result_line(label, profit, method)
+                        )
+                        if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:
+                            _m5_track("loss_trade", _bs_ativo)
+                    else:
+                        console_event(
+                            f"❓ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] "
+                            f"{fmt_result_line(label, profit, method)}"
+                        )
+
+                    try:
+                        if TRADES_CSV is not None:
+                            with TRADES_CSV.open('a', newline='', encoding='utf-8') as f:
+                                csv.writer(f).writerow([
+                                    now_iso(), INSTANCE_TAG,
+                                    _bs_ativo, tf_min, ENTRY_MODE, RIGIDEZ_MODE,
+                                    _bs_dir, order_id,
+                                    method, label, float(profit) if profit is not None else "",
+                                    saldo_before, bal_after if bal_after is not None else "",
+                                    amount_to_use, f"{BUY_LATENCY_AVG:.6f}",
+                                    _bs_patt, _bs_pend.get("pattern_from"),
+                                    secs_left,
+                                    trade_ativo, trade_chave,
+                                    _bs_pend.get("strategy", ""),
+                                ])
+                    except Exception:
+                        pass
+
+                    per_asset_pending[_bs_ativo] = None
+                    per_asset_pending_id[_bs_ativo] = None
+                    per_asset_lock_until[_bs_ativo] = now_server + period
 
         # Sleep: use fast freeze sleep during M5 freeze, normal idle otherwise
         if freeze_active:
@@ -4759,6 +4906,20 @@ if __name__ == '__main__':
     _re_m1 = "on" if RESPIRO_ENABLE_M1 else "off"
     _re_m5 = "on" if RESPIRO_ENABLE_M5 else "off"
     print(f'Keltner: M1={_ke_m1} M5={_ke_m5} | Pivot: M1={_pe_m1} M5={_pe_m5} | Respiro: M1={_re_m1} M5={_re_m5}')
+    _snm1 = "ATIVO" if SNIPER_MODE_M1 else "off"
+    _snm5 = "ATIVO" if SNIPER_MODE_M5 else "off"
+    if SNIPER_MODE_M1 or SNIPER_MODE_M5:
+        _af_label = (
+            f"antifakeout_extreme: M1={'on' if SNIPER_ANTIFAKEOUT_EXTREME_M1 else 'off'} "
+            f"M5={'on' if SNIPER_ANTIFAKEOUT_EXTREME_M5 else 'off'}"
+        )
+        print(
+            f'ARM+SNIPER: M1={_snm1}(arm≥{ARM_SCORE_MIN_M1}/fb≥{FALLBACK_ARM_SCORE_MIN_M1}/win={SNIPER_WINDOW_SECONDS_M1}s) '
+            f'M5={_snm5}(arm≥{ARM_SCORE_MIN_M5}/fb≥{FALLBACK_ARM_SCORE_MIN_M5}/win={SNIPER_WINDOW_SECONDS_M5}s) '
+            f'{_af_label}'
+        )
+    else:
+        print(f'ARM+SNIPER: M1={_snm1} M5={_snm5} (modo padrão V15 confirm-pending)')
     if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
         _scale_label = f"univ_div={M5_POOL_SWAP_UNIVERSE_DIVISOR} max_abs={M5_POOL_SWAP_MAX_ABS}" if M5_POOL_SWAP_SCALE_WITH_UNIVERSE else "scale=off"
         _don_label = f"don={M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD}c@{M5_POOL_DEAD_MARKET_RANGE_RATIO_THR:.3f} pen={M5_POOL_DEAD_MARKET_PENALTY:.1f}" if M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD > 0 else "donchian=off"
