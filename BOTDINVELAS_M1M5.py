@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-05-m5-quality-timing-v11"
+BOTDIN_VERSION = "2026-04-05-m5-sniper-timing-v12"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -381,6 +381,46 @@ SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # fallback; usar SNIPER_ANTIFAKEOUT_EX
 SNIPER_ANTIFAKEOUT_EXTREME_M1: bool = False
 SNIPER_ANTIFAKEOUT_EXTREME_M5: bool = False
 
+# =========================
+# SERVER TIME SYNCHRONIZATION
+# =========================
+# Mantém um offset entre o timestamp do servidor (IQ Option) e o relógio local.
+# get_now_ts() usa time.time() + offset para obter um timestamp de referência
+# sem depender de chamadas de rede a cada tick, reduzindo erros de timing no M5.
+_SERVER_TIME_OFFSET: float = 0.0       # offset = server_ts - time.time()
+_SERVER_TIME_OFFSET_TS: float = 0.0   # wall clock when offset was last updated
+_SERVER_TIME_OFFSET_INTERVAL: float = 30.0  # refresh interval in seconds
+
+
+def _sync_server_time_offset() -> None:
+    """Atualiza o offset entre timestamp do servidor e relógio local.
+
+    Chama API.get_server_timestamp(), calcula offset = server_ts - time.time()
+    e persiste em _SERVER_TIME_OFFSET. Chamada periodicamente (não a cada tick).
+    """
+    global _SERVER_TIME_OFFSET, _SERVER_TIME_OFFSET_TS
+    try:
+        s_ts = float(API.get_server_timestamp())
+        _SERVER_TIME_OFFSET = s_ts - time.time()
+        _SERVER_TIME_OFFSET_TS = time.time()
+    except Exception:
+        pass  # mantém offset existente — sem bloquear o loop
+
+
+def get_now_ts() -> int:
+    """Retorna Unix timestamp (segundos) alinhado com o servidor IQ Option.
+
+    Usa relógio local (time.time()) + offset cacheado para evitar chamadas de rede
+    a cada tick. O offset é atualizado automaticamente a cada
+    _SERVER_TIME_OFFSET_INTERVAL segundos de forma não-bloqueante.
+    Fallback transparente para time.time() se o offset ainda não foi inicializado
+    (offset inicial = 0.0, equivalente ao relógio local).
+    """
+    now_wall = time.time()
+    if now_wall - _SERVER_TIME_OFFSET_TS > _SERVER_TIME_OFFSET_INTERVAL:
+        _sync_server_time_offset()
+    return int(now_wall + _SERVER_TIME_OFFSET)
+
 
 def _load_from_config() -> None:
     """Carrega todos os parâmetros de estratégia do config.txt e sobrescreve os globals.
@@ -705,10 +745,7 @@ def now_iso():
 
 
 def server_hhmmss() -> str:
-    try:
-        ts = int(API.get_server_timestamp())
-    except Exception:
-        ts = int(time.time())
+    ts = get_now_ts()
     return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
 
@@ -1158,7 +1195,7 @@ def get_available_balance():
 
 def seconds_left_in_period(minutes: int) -> int:
     try:
-        ts = API.get_server_timestamp()
+        ts = get_now_ts()
         period = minutes * 60
         return int(period - (ts % period))
     except Exception:
@@ -1361,7 +1398,7 @@ def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
     sleep_s = 0.5
     for attempt in range(max_tentativas):
         try:
-            base_ts = API.get_server_timestamp()
+            base_ts = get_now_ts()
             # Tenta end_ts=agora primeiro; se não vier candles suficientes, tenta offsets alternativos
             for offset in (0, -timeframe, timeframe):
                 try:
@@ -1373,7 +1410,7 @@ def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
                     if offset != 0:
                         _log_error(f"get_candles_safe offset={offset}s falhou.", e_inner)
         except Exception as e:
-            _log_error("Erro ao buscar candles (get_server_timestamp).", e)
+            _log_error("Erro ao buscar candles.", e)
         if attempt < max_tentativas - 1:
             time.sleep(sleep_s)
             sleep_s = min(sleep_s * 2, 8.0)  # backoff exponencial; permanece em 8s após atingir o teto
@@ -2550,39 +2587,47 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
     direction_hint = pending.get("direction_hint", "call")
     pattern_mode = pending.get("pattern_mode", "fallback")
 
-    now_server = int(API.get_server_timestamp())
+    now_server = get_now_ts()
     if now_server >= expire_from + 2:
         return "expired", None
 
-    # ─── Confirmação ARM + SNIPER (0–5s): entra na abertura da vela alvo ──
+    # ─── Confirmação ARM + SNIPER (0–Ns): entra na abertura da vela alvo ──
     # Não depende de confirmação intra-vela: executa imediatamente ao abrir a
     # vela alvo (expected_confirm_from), dentro da janela SNIPER_WINDOW_SECONDS.
     # Filtro anti-fakeout: preço atual vs open da vela alvo.
+    # Timing usa open_time REAL da vela (candle["from"]) para secs_from_open,
+    # tornando a janela robusta mesmo se now_server tiver pequeno drift.
     if pattern_mode == "arm_sniper":
-        # Aguarda abertura da vela alvo
-        if now_server < expected_confirm_from:
-            return "waiting", None
-
-        # Validade: apenas durante a vela alvo; expira ao abrir a vela seguinte
-        if now_server >= expected_confirm_from + period:
-            return "expired", None
-
-        # Janela SNIPER (por TF): rejeitar se passou do limite após abertura
-        _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
-        secs_from_open = now_server - expected_confirm_from
-        if secs_from_open > _sniper_win:
-            _log_blocked("sniper_window_expired",
-                         f"tf={tf_min} secs_from_open={secs_from_open:.1f} window={_sniper_win} dir={direction_hint or 'unknown'}")
-            return "rejected", None
-
         # Busca a vela alvo (em formação: velas[-1] quando API já a entregou)
         c_target = velas[-1] if velas else None
-        if c_target is None:
-            return "waiting", None
+        latest_candle_from = int(c_target.get("from", -1)) if c_target else -1
 
         # Se a API ainda não entregou a vela alvo, aguardar próximo tick
-        if int(c_target.get("from", -1)) != expected_confirm_from:
+        if latest_candle_from < expected_confirm_from:
+            # Mas se o relógio já passou de um candle inteiro além do ECF,
+            # significa que a vela alvo veio e foi — expired definitivo.
+            if now_server >= expected_confirm_from + period:
+                return "expired", None
             return "waiting", None
+
+        # Se a vela entregue já é posterior ao alvo (alvo veio e foi)
+        if latest_candle_from > expected_confirm_from:
+            return "expired", None
+
+        # Vela alvo confirmada pelo feed — calcular secs_from_open com base no
+        # open_time REAL da vela (mais robusto que now_server - ECF com drift).
+        _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+        candle_open_ts = latest_candle_from  # == expected_confirm_from neste ponto
+        secs_from_open = now_server - candle_open_ts
+        if secs_from_open > _sniper_win:
+            _log_blocked(
+                "sniper_window_expired",
+                f"tf={tf_min} secs_from_open={secs_from_open:.1f} "
+                f"window={_sniper_win} ecf={expected_confirm_from} "
+                f"candle_open_ts={candle_open_ts} now_server={now_server} "
+                f"dir={direction_hint or 'unknown'}"
+            )
+            return "rejected", None
 
         open_candle   = float(c_target.get("open", 0))
         current_price = float(c_target.get("close", open_candle))
@@ -2712,10 +2757,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
 def within_entry_window(tf_min: int) -> Tuple[bool, int, int]:
     period = tf_min * 60
     window = ENTRY_WINDOW_SECONDS_M5 if tf_min == 5 else ENTRY_WINDOW_SECONDS_M1
-    try:
-        now_s = int(API.get_server_timestamp())
-    except Exception:
-        now_s = int(time.time())
+    now_s = get_now_ts()
     sec = int(now_s % period)
     return sec <= window, sec, window
 
@@ -3780,7 +3822,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
             console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
             break
 
-        now_server = int(API.get_server_timestamp())
+        now_server = get_now_ts()
         candle_id = now_server // period
 
         if pending is None and candle_id != last_idle_candle_id:
@@ -4482,7 +4524,7 @@ def loop_patterns_multi(
             console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
             break
 
-        now_server = int(API.get_server_timestamp())
+        now_server = get_now_ts()
         candle_id = now_server // period
 
         # Recheck completo do pool a cada novo candle (sem ban permanente)
@@ -4504,10 +4546,11 @@ def loop_patterns_multi(
         # --- M5 pending-first freeze: focus only on assets with pending signals ---
         if tf_min == 5 and PENDING_FREEZE_SECONDS_M5 > 0:
             # Separate pendings into eligible (entry window still open) and stale.
-            # A pending is eligible when now_server <= expected_confirm_from + entry_window,
+            # A pending is eligible when now_ts <= expected_confirm_from + entry_window,
             # i.e. there is still time to execute the signal.  For arm_sniper mode the
             # effective window is sniper_window_seconds; for all others it is
             # entry_window_seconds_m5.  Unknown ECF (0) → treated as eligible.
+            # Uses get_now_ts() (fresh, offset-corrected) instead of stale loop now_server.
             _now_wall = time.time()
             def _pend_eligible(a: str) -> bool:
                 p = per_asset_pending.get(a)
@@ -4521,7 +4564,7 @@ def loop_patterns_multi(
                     return True  # no ECF info → assume eligible
                 _pmode = p.get("pattern_mode", "v15")
                 _win = SNIPER_WINDOW_SECONDS_M5 if _pmode == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
-                return now_server <= _ecf + _win
+                return get_now_ts() <= _ecf + _win
 
             pending_assets = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
             eligible_pending_assets = [(a, c) for a, c in pending_assets if _pend_eligible(a)]
@@ -4539,6 +4582,7 @@ def loop_patterns_multi(
                 # Throttle logging to once per 30s per asset to avoid log spam.
                 _skip_now = time.time()
                 _throttle_s = 30.0
+                _now_log = get_now_ts()
                 for a, _ in pending_assets:
                     _last_skip = _freeze_skip_last_logged.get(a, 0.0)
                     if (_skip_now - _last_skip) >= _throttle_s:
@@ -4546,11 +4590,13 @@ def loop_patterns_multi(
                         _ecf_log = int(_p.get("expected_confirm_from", 0)) if _p else 0
                         _pmode_log = (_p.get("pattern_mode", "v15") if _p else "v15")
                         _win_log = SNIPER_WINDOW_SECONDS_M5 if _pmode_log == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
+                        _secs_past_log = _now_log - _ecf_log if _ecf_log else "?"
                         _log_blocked(
                             "freeze_skip",
                             f"ativo={a} tf={tf_min} "
                             f"reason=entry_window_closed "
-                            f"ecf={_ecf_log} win={_win_log} now_server={now_server}"
+                            f"ecf={_ecf_log} win={_win_log} now_server={_now_log} "
+                            f"secs_past_ecf={_secs_past_log} mode={_pmode_log}"
                         )
                         if M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("freeze_skip", a)
@@ -4614,19 +4660,47 @@ def loop_patterns_multi(
 
             if pend is not None and pend_id is not None:
                 # M5 pending TTL: drop stale pendings whose entry window has already closed.
-                # Primary check: entry window closed relative to expected_confirm_from.
-                #   - arm_sniper mode: now_server > ecf + sniper_window
-                #   - v15/respiro/fallback: now_server > ecf + entry_window_seconds
-                # Fallback: wall-clock age > PENDING_MAX_AGE_SECONDS_M5 (guards against
-                # signals with invalid/missing ECF that would otherwise linger forever).
+                #
+                # Para arm_sniper: usa timing baseado em candle (velas[-1]["from"]) para
+                # determinar secs_from_open de forma robusta, evitando expiry prematura quando
+                # a vela alvo ainda não foi entregue pelo feed. Lógica:
+                #   - Se velas[-1]["from"] < ecf: vela alvo não chegou → não expirar
+                #     (mas expirar se now_ts já passou de um período inteiro após ecf)
+                #   - Se velas[-1]["from"] == ecf: vela alvo aberta → secs_from_open = now - ecf
+                #   - Se velas[-1]["from"] > ecf: passamos da vela alvo → expirado
+                # Para v15/respiro/fallback: comportamento original (now_server > ecf + win).
+                # Fallback: wall-clock age > PENDING_MAX_AGE_SECONDS_M5 (ECF ausente/inválido).
                 if tf_min == 5:
+                    _now_ttl = get_now_ts()
                     try:
                         _ecf_ttl = int(pend.get("expected_confirm_from", 0) or 0)
                     except (ValueError, TypeError):
                         _ecf_ttl = 0  # ECF corrompido → skip ECF-based check
                     _pmode_ttl = pend.get("pattern_mode", "v15")
                     _win_ttl = SNIPER_WINDOW_SECONDS_M5 if _pmode_ttl == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
-                    _ecf_expired = (_ecf_ttl > 0 and now_server > _ecf_ttl + _win_ttl)
+                    _latest_candle_ts = int(velas[-1].get("from", 0)) if velas else 0
+                    if _ecf_ttl > 0:
+                        if _pmode_ttl == "arm_sniper":
+                            # Candle-based expiry: só expira quando confirmado pelo feed
+                            if _latest_candle_ts > _ecf_ttl:
+                                # Vela alvo ficou para trás — realmente expirado
+                                _ecf_expired = True
+                                _secs_fo_ttl = _now_ttl - _ecf_ttl
+                            elif _latest_candle_ts == _ecf_ttl:
+                                # Vela alvo confirmada pelo feed — usar secs_from_open real
+                                _secs_fo_ttl = _now_ttl - _latest_candle_ts
+                                _ecf_expired = _secs_fo_ttl > _win_ttl
+                            else:
+                                # Vela alvo ainda não chegou no feed — não expirar ainda
+                                # Segurança: se now_ts já passou do período inteiro, expirar
+                                _secs_fo_ttl = _now_ttl - _ecf_ttl
+                                _ecf_expired = _now_ttl >= _ecf_ttl + period
+                        else:
+                            _secs_fo_ttl = _now_ttl - _ecf_ttl
+                            _ecf_expired = _now_ttl > _ecf_ttl + _win_ttl
+                    else:
+                        _ecf_expired = False
+                        _secs_fo_ttl = 0
                     # Fallback wall-clock guard (only when ECF is unknown/zero)
                     _pend_detected_ts = pend.get("detected_ts") or 0.0
                     _pend_age = (time.time() - _pend_detected_ts) if _pend_detected_ts > 0 else 0.0
@@ -4637,7 +4711,9 @@ def loop_patterns_multi(
                     )
                     if _ecf_expired or _age_expired:
                         _timeout_reason = (
-                            f"ecf_window_closed ecf={_ecf_ttl} win={_win_ttl} now={now_server}"
+                            f"ecf_window_closed ecf={_ecf_ttl} win={_win_ttl} "
+                            f"now={_now_ttl} candle_open_ts={_latest_candle_ts} "
+                            f"secs_from_open={_secs_fo_ttl}"
                             if _ecf_expired
                             else f"age_guard secs_elapsed={_pend_age:.1f} max={PENDING_MAX_AGE_SECONDS_M5}"
                         )
