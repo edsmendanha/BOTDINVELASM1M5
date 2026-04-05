@@ -24,6 +24,26 @@ purchase_buffer_seconds = 1
 # true  = permitir OTC em conta real (apenas para testes)
 allow_otc_live = false
 
+# --- Universo de ativos para M5 ---
+# Controla quais mercados o bot considera ao montar o pool de ativos M5.
+# Ambas as flags são independentes e podem ser combinadas livremente.
+#
+# m5_allow_otc = true   → inclui ativos OTC  (ex: AUDCAD-OTC, EURUSD-OTC)
+# m5_allow_otc = false  → exclui ativos OTC
+#
+# m5_allow_open_market = true  → inclui ativos de mercado aberto (ex: EURUSD-OP)
+# m5_allow_open_market = false → exclui ativos de mercado aberto
+#
+# Combinações:
+#   otc=true  + open_market=true  → pool misto OTC + mercado aberto (padrão)
+#   otc=true  + open_market=false → apenas OTC
+#   otc=false + open_market=true  → apenas mercado aberto
+#   otc=false + open_market=false → erro (pool vazio) — evite esta combinação
+#
+# Nota de segurança: OTC em conta REAL ainda requer allow_otc_live=true.
+m5_allow_otc          = true
+m5_allow_open_market  = true
+
 # =============================================================================
 [SLEEP]
 # =============================================================================

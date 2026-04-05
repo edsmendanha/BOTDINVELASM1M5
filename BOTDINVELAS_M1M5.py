@@ -353,6 +353,13 @@ RESPIRO_CONFIRM_POLLS_M5: int = 1
 # Restrição de OTC em conta real
 ALLOW_OTC_LIVE: bool = False
 
+# M5 market universe flags (configuráveis em [MARKET] no config.txt)
+# m5_allow_otc=true  → pool M5 inclui ativos OTC
+# m5_allow_open_market=true → pool M5 inclui ativos de mercado aberto (-OP)
+# Quando ambos true (padrão), o pool M5 aceita OTC e mercado aberto simultaneamente.
+M5_ALLOW_OTC: bool = True
+M5_ALLOW_OPEN_MARKET: bool = True
+
 # V15 per-timeframe (defaults = valores globais; sobrescritos em _load_from_config)
 V15_SCORE_MIN_M1: int = 55
 V15_SCORE_MIN_M5: int = 55
@@ -432,7 +439,7 @@ def _load_from_config() -> None:
     global PENDING_FREEZE_SECONDS_M5, PENDING_FREEZE_POLL_SLEEP_M5, PENDING_MAX_AGE_SECONDS_M5
     global AMOUNT_MODE, AMOUNT_FIXED, AMOUNT_PERCENT, AMOUNT_RECALC_EACH, AMOUNT_MIN
     global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
-    global ALLOW_OTC_LIVE
+    global ALLOW_OTC_LIVE, M5_ALLOW_OTC, M5_ALLOW_OPEN_MARKET
     global ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR
     global ATR_MIN_RATIO_ABS_M1, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M1, ATR_MAX_THR_M5
     global ATR_RATIO_QUEUE_M1, ATR_RATIO_QUEUE_M5
@@ -481,6 +488,8 @@ def _load_from_config() -> None:
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
+    M5_ALLOW_OTC = _cfgbool('MARKET', 'm5_allow_otc', M5_ALLOW_OTC)
+    M5_ALLOW_OPEN_MARKET = _cfgbool('MARKET', 'm5_allow_open_market', M5_ALLOW_OPEN_MARKET)
 
     # [SLEEP]
     IDLE_SLEEP_S_M1 = _cfgget('SLEEP', 'idle_sleep_m1', IDLE_SLEEP_S_M1, float)
@@ -3172,7 +3181,8 @@ def load_ativos_por_categoria(tf_min: int) -> Tuple[List[str], List[str]]:
     return digital, binaria
 
 
-def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0) -> List[Tuple[str, str]]:
+def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
+                     allow_open_market: bool = False) -> List[Tuple[str, str]]:
     """Monta lista de (ativo, categoria) baseada exclusivamente no Ativos.txt.
 
     Lógica:
@@ -3187,6 +3197,10 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0) -> List[Tup
 
     Parâmetro tf_min: 1=M1, 5=M5. Se 0, usa M1 como padrão para leitura do arquivo
     (o filtro de timeframe da API ainda é desativado quando tf_min=0).
+
+    Parâmetro allow_open_market: quando True, inclui ativos de mercado aberto (-OP /
+    sem sufixo) mesmo que use_otc=True, permitindo pool misto OTC + mercado aberto.
+    Quando use_otc=False e allow_open_market=False, nenhum ativo passa (pool vazio).
     """
     try:
         ot = API.get_all_open_time()
@@ -3200,10 +3214,18 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0) -> List[Tup
         return '-OTC' not in name_u and '-OP' not in name_u
 
     def _passes_market_filter(name_u: str) -> bool:
-        if use_otc:
-            return '-OTC' in name_u or _has_no_market_suffix(name_u)
+        is_otc_asset = '-OTC' in name_u
+        is_op_asset = '-OP' in name_u
+        has_no_suffix = _has_no_market_suffix(name_u)
+        if use_otc and allow_open_market:
+            # Pool misto: aceita tudo (OTC, -OP e sem sufixo)
+            return True
+        elif use_otc:
+            return is_otc_asset or has_no_suffix
+        elif allow_open_market:
+            return (is_op_asset or has_no_suffix) and not is_otc_asset
         else:
-            return ('-OP' in name_u or _has_no_market_suffix(name_u)) and '-OTC' not in name_u
+            return False
 
     # Constrói mapa de ativos abertos: normalized_name → (real_name, categoria)
     # Digital tem prioridade; binária entra apenas se não houver digital equivalente
@@ -3240,12 +3262,39 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0) -> List[Tup
     result: List[Tuple[str, str]] = []
     used: set = set()
 
+    # Detecta ativos que estão em Ativos.txt mas foram filtrados pelo mercado
+    # (ex: ativo OTC quando m5_allow_otc=false, ou ativo -OP quando allow_open_market=false)
+    def _market_filter_skip_reason(name_u: str) -> Optional[str]:
+        """Retorna razão de skip por filtro de mercado, ou None se não filtrado."""
+        if use_otc and allow_open_market:
+            return None  # pool misto — nada é filtrado
+        is_otc_asset = '-OTC' in name_u
+        is_op_asset = '-OP' in name_u
+        if is_otc_asset and not use_otc:
+            return "m5_allow_otc=false"
+        if is_op_asset and not allow_open_market:
+            return "m5_allow_open_market=false"
+        return None
+
     # 1ª passagem: ativos da lista DIGITAL do Ativos.txt que estejam abertos
     for norm_name in digital_lista:
         if len(result) >= max_count:
             break
         entry = open_map.get(norm_name)
         if entry is None:
+            # Verifica se o ativo existe em algum mercado mas foi filtrado
+            for table_key in ('digital', 'binary'):
+                table = ot.get(table_key, {})
+                if isinstance(table, dict):
+                    for raw_name in table:
+                        if _normalize_asset_name(raw_name) == norm_name:
+                            reason = _market_filter_skip_reason(str(raw_name).upper())
+                            if reason:
+                                _log_blocked(
+                                    f"market_filter_skip [{reason}]",
+                                    f"ativo={display_asset_name(raw_name)} tf={tf_min}",
+                                )
+                            break
             continue
         real_name, cat = entry
         if real_name.upper() in used:
@@ -3293,15 +3342,19 @@ def _donchian_range_ratio_m5(ativo: str, period: int) -> Optional[float]:
         return None
 
 
-def build_candidate_pool(use_otc: bool, limit: int = 200, tf_min: int = 0) -> List[Tuple[str, str]]:
+def build_candidate_pool(use_otc: bool, limit: int = 200, tf_min: int = 0,
+                         allow_open_market: bool = False) -> List[Tuple[str, str]]:
     """Retorna todos os candidatos disponíveis exclusivamente do Ativos.txt.
 
     Igual a build_asset_list mas com limite generoso para varredura dinâmica.
     Filtra por tf_min quando fornecido — garante que apenas ativos com o
     timeframe correto (M1/M5) entrem no pool de candidatos.
     Só inclui ativos listados no Ativos.txt que estejam abertos no momento.
+    allow_open_market: quando True (e use_otc=True), inclui também ativos de
+    mercado aberto no pool, resultando em seleção mista OTC + mercado aberto.
     """
-    return build_asset_list(use_otc=use_otc, max_count=limit, tf_min=tf_min)
+    return build_asset_list(use_otc=use_otc, max_count=limit, tf_min=tf_min,
+                            allow_open_market=allow_open_market)
 
 
 def rank_assets_by_regime(
@@ -4022,6 +4075,7 @@ def loop_patterns_multi(
     tf_min: int,
     max_ativos: int = 0,
     use_otc: bool = False,
+    allow_open_market: bool = False,
     run_minutes: int = 0,
     max_entries: int = 0,
 ):
@@ -4128,7 +4182,8 @@ def loop_patterns_multi(
 
         try:
             # ← Filtra candidatos por timeframe (M1/M5) e prioridade digital
-            candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min)
+            candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min,
+                                              allow_open_market=allow_open_market)
         except Exception as exc:
             _log_error("Falha ao buscar pool de candidatos em _refill_pool.", exc)
             return
@@ -4225,7 +4280,8 @@ def loop_patterns_multi(
         active_names = {a.upper() for a, _ in active_ativos}
         try:
             # ← Filtra candidatos por timeframe (M1/M5) e prioridade digital
-            candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min)
+            candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min,
+                                              allow_open_market=allow_open_market)
         except Exception as exc:
             _log_error("Falha ao buscar pool de candidatos em _replace_asset.", exc)
             return
@@ -4377,7 +4433,8 @@ def loop_patterns_multi(
 
         # Universe of replacement candidates
         try:
-            universe = build_candidate_pool(use_otc=use_otc, tf_min=tf_min)
+            universe = build_candidate_pool(use_otc=use_otc, tf_min=tf_min,
+                                            allow_open_market=allow_open_market)
         except Exception as exc:
             _log_error("Falha ao buscar universo em _rebalance_m5_pool.", exc)
             return
@@ -4899,8 +4956,10 @@ def loop_patterns_multi(
                 amount_to_use = compute_amount(saldo_before)
                 secs_left = seconds_left_in_period(tf_min)
 
-                # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC)
-                trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=use_otc)
+                # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC/mercado)
+                # Em modo misto (OTC + mercado aberto), preserva o mercado do ativo detectado.
+                _asset_otc_mode = use_otc if not allow_open_market else ('-OTC' in _bs_ativo.upper())
+                trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=_asset_otc_mode)
                 market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
 
                 console_event(
@@ -4950,11 +5009,11 @@ def loop_patterns_multi(
                         console_event(
                             cyellow(f"⚠️ [{server_hhmmss()}] [{display_asset_name(_bs_ativo)}] Falha ao enviar ordem.")
                         )
-                    # Se falhou no digital, tentar binária como fallback (respeitando modo OTC)
+                    # Se falhou no digital, tentar binária como fallback (respeitando modo OTC/mercado)
                     if trade_chave == 'digital':
                         fb_name, fb_chave = find_preferred_variant_with_rules(
                             _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', _bs_ativo.upper())),
-                            allow_otc=use_otc
+                            allow_otc=_asset_otc_mode
                         )
                         if fb_name and fb_chave and fb_chave != 'digital':
                             # Em modo sniper, verificar se ainda há janela antes do fallback binário
@@ -5127,8 +5186,26 @@ if __name__ == '__main__':
     TIMEFRAME_MINUTES = ask_timeframe()
 
     # Tipo de mercado
-    use_otc = ask_market_type()
-    market_label = "OTC" if use_otc else "Mercado Aberto"
+    # M5: determinado pelos flags de config m5_allow_otc / m5_allow_open_market
+    # M1: seleção interativa (OTC ou Mercado Aberto)
+    if TIMEFRAME_MINUTES == 5:
+        use_otc = M5_ALLOW_OTC
+        allow_open_market = M5_ALLOW_OPEN_MARKET
+        if use_otc and allow_open_market:
+            market_label = "OTC + Mercado Aberto (misto)"
+        elif use_otc:
+            market_label = "OTC"
+        elif allow_open_market:
+            market_label = "Mercado Aberto"
+        else:
+            print("\n⚠️  AVISO: m5_allow_otc=false e m5_allow_open_market=false — nenhum mercado habilitado para M5.")
+            print("  Habilite ao menos um mercado no config.txt [MARKET].")
+            sys.exit(1)
+        print(f"\n🌍 M5 Mercado (config): {market_label}")
+    else:
+        use_otc = ask_market_type()
+        allow_open_market = not use_otc
+        market_label = "OTC" if use_otc else "Mercado Aberto"
 
     # ─── RESTRIÇÃO DE SEGURANÇA: OTC bloqueado em conta REAL ──────────────
     if conta == 'REAL' and use_otc and not ALLOW_OTC_LIVE:
@@ -5142,6 +5219,8 @@ if __name__ == '__main__':
         print("  Para alterar esse comportamento, edite config.txt:")
         print("    [MARKET]")
         print("    allow_otc_live = true   ← (não recomendado)")
+        if TIMEFRAME_MINUTES == 5:
+            print("  Ou desative OTC para M5 com:  m5_allow_otc = false")
         print("=" * 70)
         sys.exit(1)
 
@@ -5181,7 +5260,8 @@ if __name__ == '__main__':
             f"⚠️  Nenhuma seção [DIGITAL {tf_label_init}] ou [BINARIA {tf_label_init}] "
             "encontrada no Ativos.txt. Verifique o arquivo."
         )
-    ativos_lista = build_asset_list(use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES)
+    ativos_lista = build_asset_list(use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES,
+                                    allow_open_market=allow_open_market)
     if not ativos_lista:
         print(
             f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe M{TIMEFRAME_MINUTES} "
@@ -5189,7 +5269,15 @@ if __name__ == '__main__':
         )
 
     # Inicializar paths de log com tag automática
-    market_tag = "otc" if use_otc else "op"
+    if TIMEFRAME_MINUTES == 5:
+        if use_otc and allow_open_market:
+            market_tag = "misto"
+        elif use_otc:
+            market_tag = "otc"
+        else:
+            market_tag = "op"
+    else:
+        market_tag = "otc" if use_otc else "op"
     auto_tag = f"m{TIMEFRAME_MINUTES}_{market_tag}_{max_ativos}ativos"
     _init_paths_with_tag(auto_tag)
     _ensure_csv_headers()
@@ -5205,6 +5293,10 @@ if __name__ == '__main__':
     print(f'Conta: {"DEMO" if conta == "PRACTICE" else "REAL"} | Mercado: {market_label}')
     otc_live_status = "permitido" if ALLOW_OTC_LIVE else "BLOQUEADO (somente demo)"
     print(f'OTC em conta real: {otc_live_status}')
+    if TIMEFRAME_MINUTES == 5:
+        _m5_otc_flag = "on" if M5_ALLOW_OTC else "off"
+        _m5_op_flag = "on" if M5_ALLOW_OPEN_MARKET else "off"
+        print(f'M5 Mercados: m5_allow_otc={_m5_otc_flag} | m5_allow_open_market={_m5_op_flag}')
     modo_label = "REVERSÃO (V15)" if ENTRY_MODE == "reversal" else "CONTINUAÇÃO (Respiro)"
     print(f'Timeframe: M{TIMEFRAME_MINUTES} | Modo: {modo_label} | Carteira: Ativos.txt')
     print(f'Prioridade: [DIGITAL M{TIMEFRAME_MINUTES}] → [BINARIA M{TIMEFRAME_MINUTES}] (fallback apenas se faltar digital aberta)')
@@ -5273,6 +5365,7 @@ if __name__ == '__main__':
             tf_min=TIMEFRAME_MINUTES,
             max_ativos=max_ativos,
             use_otc=use_otc,
+            allow_open_market=allow_open_market,
             run_minutes=run_minutes,
             max_entries=MAX_ENTRIES,
         )
