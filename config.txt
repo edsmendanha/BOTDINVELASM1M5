@@ -206,7 +206,7 @@ m5_extreme_candles = 20
 m5_extreme_frac    = 0.20
 
 # Freeze window: when pending signal detected, focus only on that asset for N seconds
-# 0 = disable freeze (recomendado para sniper multi-ativo: evita freeze_skip
+# 0 = desativar freeze (recomendável para sniper multi-ativo: evita freeze_skip
 # que usava now_server stale; o mecanismo candle-based do v12 já é suficiente)
 pending_freeze_seconds_m5 = 0
 

@@ -408,11 +408,13 @@ def _sync_server_time_offset() -> None:
 
 
 def get_now_ts() -> int:
-    """Retorna timestamp atual alinhado com o servidor (int).
+    """Retorna Unix timestamp (segundos) alinhado com o servidor IQ Option.
 
-    Usa relógio local + offset cacheado para evitar chamadas de rede a cada tick.
-    O offset é atualizado automaticamente a cada _SERVER_TIME_OFFSET_INTERVAL segundos.
-    Fallback para time.time() se o offset ainda não foi inicializado.
+    Usa relógio local (time.time()) + offset cacheado para evitar chamadas de rede
+    a cada tick. O offset é atualizado automaticamente a cada
+    _SERVER_TIME_OFFSET_INTERVAL segundos de forma não-bloqueante.
+    Fallback transparente para time.time() se o offset ainda não foi inicializado
+    (offset inicial = 0.0, equivalente ao relógio local).
     """
     now_wall = time.time()
     if now_wall - _SERVER_TIME_OFFSET_TS > _SERVER_TIME_OFFSET_INTERVAL:
@@ -2620,7 +2622,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
         if secs_from_open > _sniper_win:
             _log_blocked(
                 "sniper_window_expired",
-                f"tf={tf_min} ativo=? secs_from_open={secs_from_open:.1f} "
+                f"tf={tf_min} secs_from_open={secs_from_open:.1f} "
                 f"window={_sniper_win} ecf={expected_confirm_from} "
                 f"candle_open_ts={candle_open_ts} now_server={now_server} "
                 f"dir={direction_hint or 'unknown'}"
