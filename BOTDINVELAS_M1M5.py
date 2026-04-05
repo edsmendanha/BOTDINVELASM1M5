@@ -130,6 +130,9 @@ ERRORS_LOG: Optional[Path] = None
 POOL_REBALANCE_LOG_M5: Optional[Path] = None
 SINAIS_LOG: Optional[Path] = None
 SINAIS_CONFIRMADOS_LOG: Optional[Path] = None
+# Sinais acionáveis: apenas entradas que o bot DECIDIU executar (antes do envio da ordem).
+# Contém: timestamp_confirmação | ativo | direção | TF | ENTRA_EM=HH:MM:SS | padrão
+SINAIS_ACIONAVEIS_LOG: Optional[Path] = None
 
 
 def _mkdirp(p: Path):
@@ -150,7 +153,7 @@ def _sanitize_tag(tag: str) -> str:
 
 def _init_paths_with_tag(tag: str):
     global INSTANCE_TAG, BLOCKED_LOG, LATENCY_CSV, TRADES_CSV, PATTERNS_CSV, ERRORS_LOG
-    global POOL_REBALANCE_LOG_M5, SINAIS_LOG, SINAIS_CONFIRMADOS_LOG
+    global POOL_REBALANCE_LOG_M5, SINAIS_LOG, SINAIS_CONFIRMADOS_LOG, SINAIS_ACIONAVEIS_LOG
 
     _mkdirp(LOG_DIR)
     _mkdirp(STATE_DIR)
@@ -165,6 +168,7 @@ def _init_paths_with_tag(tag: str):
     POOL_REBALANCE_LOG_M5 = LOG_DIR / 'pool_rebalance_m5.log'
     SINAIS_LOG = LOG_DIR / f'sinais_{INSTANCE_TAG}.txt'
     SINAIS_CONFIRMADOS_LOG = LOG_DIR / f'sinais_confirmados_{INSTANCE_TAG}.txt'
+    SINAIS_ACIONAVEIS_LOG = LOG_DIR / f'sinais_acionaveis_{INSTANCE_TAG}.txt'
 
 
 # =========================
@@ -817,7 +821,7 @@ def _log_sinal_confirmado(
 ) -> None:
     """Grava SOMENTE sinais efetivamente emitidos para compra em sinais_confirmados_<tag>.txt.
 
-    Este arquivo contém APENAS as entradas que o bot efetivamente realizou.
+    Este arquivo contém APENAS as entradas que o bot efetivamente realizou (ordem aceita).
     Não inclui detected / rejected / pending_timeout.
     Formato: HH:MM:SS | ATIVO | DIRECAO | TF | ENTRA_EM=HH:MM:SS | PADRAO
     """
@@ -841,6 +845,48 @@ def _log_sinal_confirmado(
             f"ENTRA_EM={entra_hms} | {pattern_name}"
         )
         with SINAIS_CONFIRMADOS_LOG.open('a', encoding='utf-8') as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _log_sinal_acionavel(
+    ativo: str,
+    tf: int,
+    direction: str,
+    sig: Optional[Dict[str, Any]],
+    entra_em_ts: Optional[int] = None,
+) -> None:
+    """Grava sinais ACIONÁVEIS em sinais_acionaveis_<tag>.txt.
+
+    Este arquivo contém APENAS sinais onde:
+      - padrão confirmado
+      - janela de entrada válida
+      - bot DECIDIU entrar (registrado antes do envio da ordem, independente do resultado)
+
+    É o arquivo de "sinais para publicar": somente entradas realmente agendadas/executadas.
+    Formato: HH:MM:SS | ATIVO | DIRECAO | TF | ENTRA_EM=HH:MM:SS | PADRAO
+    """
+    try:
+        if SINAIS_ACIONAVEIS_LOG is None:
+            return
+        ts_now = datetime.now().strftime("%H:%M:%S")
+        direction_upper = direction.upper()
+        tf_label = f"M{tf}"
+        if entra_em_ts is not None:
+            try:
+                entra_hms = datetime.fromtimestamp(int(entra_em_ts)).strftime("%H:%M:%S")
+            except Exception as e_ts:
+                _log_error(f"_log_sinal_acionavel: entra_em_ts={entra_em_ts} inválido.", e_ts)
+                entra_hms = ts_now
+        else:
+            entra_hms = ts_now
+        pattern_name = sig.get("pattern_name", "") if sig else ""
+        line = (
+            f"{ts_now} | {ativo} | {direction_upper} | {tf_label} | "
+            f"ENTRA_EM={entra_hms} | {pattern_name}"
+        )
+        with SINAIS_ACIONAVEIS_LOG.open('a', encoding='utf-8') as f:
             f.write(line + "\n")
     except Exception:
         pass
@@ -968,6 +1014,57 @@ def connect():
         print('\n❌ Falha na conexão:', reason)
         sys.exit(1)
     print('✅ Conectado.')
+
+
+# Configuração de reconexão automática
+_RECONNECT_MAX_ATTEMPTS: int = 5
+_RECONNECT_SLEEP_S: float = 5.0
+# Intervalo mínimo entre verificações de conexão (segundos): evita overhead em loop rápido
+_RECONNECT_CHECK_INTERVAL_S: float = 30.0
+_last_connect_check_ts: float = 0.0
+
+
+def _ensure_connected() -> bool:
+    """Verifica a conexão com a IQ Option e reconecta se necessário.
+
+    Para evitar overhead em loops rápidos (M1: ~0.2s/iteração), a verificação
+    de check_connect() é executada no máximo a cada _RECONNECT_CHECK_INTERVAL_S
+    segundos. Uma falha explícita da API força verificação imediata.
+
+    Retorna True se conectado (ou após reconexão bem-sucedida), False se falhar.
+    Usa até _RECONNECT_MAX_ATTEMPTS tentativas com pausa de _RECONNECT_SLEEP_S entre elas.
+    """
+    global API, _last_connect_check_ts
+    now_t = time.time()
+    if now_t - _last_connect_check_ts < _RECONNECT_CHECK_INTERVAL_S:
+        return True  # still within check interval; skip check_connect() overhead
+    _last_connect_check_ts = now_t
+    try:
+        if API is not None and API.check_connect():
+            return True
+    except Exception:
+        pass
+    _log_error("Conexão perdida — tentando reconectar...")
+    print(cyellow("⚠️  Conexão perdida. Tentando reconectar..."))
+    for attempt in range(1, _RECONNECT_MAX_ATTEMPTS + 1):
+        try:
+            ok, reason = API.connect()
+            if ok:
+                if conta:
+                    try:
+                        API.change_balance(conta)
+                    except Exception:
+                        pass
+                _last_connect_check_ts = time.time()
+                print(cgreen(f"✅ Reconectado (tentativa {attempt})."))
+                return True
+        except Exception as exc:
+            _log_error(f"Reconexão tentativa {attempt} falhou.", exc)
+        print(cyellow(f"🔄 Reconectando... ({attempt}/{_RECONNECT_MAX_ATTEMPTS})"))
+        time.sleep(_RECONNECT_SLEEP_S)
+    _log_error("Reconexão esgotou todas as tentativas.")
+    print(cred(f"❌ Não foi possível reconectar após {_RECONNECT_MAX_ATTEMPTS} tentativas."))
+    return False
 
 
 def get_profile_name() -> str:
@@ -3602,6 +3699,11 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
             console_event("🎯 STOP WIN atingido. Encerrando...")
             break
 
+        # Reconexão automática
+        if not _ensure_connected():
+            console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
+            break
+
         now_server = int(API.get_server_timestamp())
         candle_id = now_server // period
 
@@ -3683,6 +3785,12 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
                     f"🕯️ [{server_hhmmss()}] Sinal confirmado: {patt} | "
                     f"Entrada: {cgreen('CALL 📈') if direction == 'call' else cred('PUT 📉')} | "
                     f"${amount_to_use:.2f} | secs_left={secs_left}"
+                )
+
+                # Log acionável: registra a decisão de entrar ANTES do envio da ordem.
+                _log_sinal_acionavel(
+                    ativo, tf_min, direction, pending,
+                    entra_em_ts=pending.get("expected_confirm_from"),
                 )
 
                 result_container = {}
@@ -3879,17 +3987,23 @@ def loop_patterns_multi(
 
     # Controle do recheck por candle
     last_recheck_cid: int = -1
-    # Controle de re-ranking para M1 (a cada 5 minutos)
-    M1_RANK_INTERVAL_S = 900  # re-rankeia ativos M1 a cada 5 minutos
+    # Controle de re-ranking para M1 (a cada 15 minutos)
+    M1_RANK_INTERVAL_S = 900  # re-rankeia ativos M1 a cada 15 minutos
     _last_m1_rank_ts: float = 0.0
+    # Controle de refresh do pool M5 (sem dynamic pool): a cada 10 minutos
+    # recalcula os candidatos e substitui ativos que saíram da lista aberta.
+    M5_REFRESH_INTERVAL_S = 600  # refresh M5 pool a cada 10 minutos
+    _last_m5_refresh_ts: float = 0.0
 
     def _refill_pool(now_cid: int) -> None:
         """Re-verifica o pool completo e adiciona ativos disponíveis.
 
         Para M1: aplica ranking por ATR+ADX+BBW a cada M1_RANK_INTERVAL_S segundos,
         mantendo apenas os ativos com melhor regime de mercado no pool ativo.
+        Para M5 (sem dynamic pool): refresca o pool a cada M5_REFRESH_INTERVAL_S
+        substituindo ativos que fecharam ou saíram da lista de candidatos abertos.
         """
-        nonlocal last_recheck_cid, active_ativos, _last_m1_rank_ts
+        nonlocal last_recheck_cid, active_ativos, _last_m1_rank_ts, _last_m5_refresh_ts
         if now_cid == last_recheck_cid:
             return
         last_recheck_cid = now_cid
@@ -3939,6 +4053,24 @@ def loop_patterns_multi(
                     )
                     console_event(f"➕ Re-ranking M{tf_min}: adicionados ao pool: " + cat_str)
                 return
+
+        # M5 sem dynamic pool: refresh periódico para substituir ativos fechados/indisponíveis
+        if tf_min == 5 and not M5_POOL_DYNAMIC_ENABLE:
+            now_t = time.time()
+            if now_t - _last_m5_refresh_ts >= M5_REFRESH_INTERVAL_S or not active_ativos:
+                _last_m5_refresh_ts = now_t
+                candidate_names = {a.upper() for a, _ in candidates}
+                pending_ativos = {a for a, _ in active_ativos
+                                  if per_asset_pending.get(a) is not None}
+                # Remove ativos que não estão mais disponíveis na lista de candidatos abertos
+                removed = [a for a, _ in active_ativos
+                           if a.upper() not in candidate_names and a not in pending_ativos]
+                if removed:
+                    active_ativos = [(a, c) for a, c in active_ativos if a not in removed]
+                    console_event(
+                        f"🔄 Refresh M5: removidos do pool (fechados/indisponíveis): "
+                        + ", ".join(display_asset_name(a) for a in removed)
+                    )
 
         # M5 (ou M1 fora do intervalo de ranking): preenchimento normal sem ranking
         active_names = {a.upper() for a, _ in active_ativos}
@@ -4269,6 +4401,11 @@ def loop_patterns_multi(
             )
             break
 
+        # Reconexão automática: verifica e restaura a conexão antes de cada ciclo
+        if not _ensure_connected():
+            console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
+            break
+
         now_server = int(API.get_server_timestamp())
         candle_id = now_server // period
 
@@ -4590,6 +4727,13 @@ def loop_patterns_multi(
                     f"${amount_to_use:.2f} | "
                     f"Mercado: {market_type_label} ({display_asset_name(trade_ativo)}) | secs_left={secs_left} | "
                     f"Entradas: {entries_accepted}" + (f"/{max_entries}" if max_entries > 0 else "/∞")
+                )
+
+                # Log acionável: registra a decisão de entrar ANTES do envio da ordem.
+                # Este log persiste mesmo que a ordem seja rejeitada pela corretora.
+                _log_sinal_acionavel(
+                    _bs_ativo, tf_min, _bs_dir, _bs_pend,
+                    entra_em_ts=_bs_pend.get("expected_confirm_from"),
                 )
 
                 _buy_start_ts = time.time()
@@ -4934,7 +5078,9 @@ if __name__ == '__main__':
         print('Pool Dinâmico M5: desativado (pool_dynamic_enable=false)')
     print(f'Logs: {LOG_DIR.as_posix()}/ | State: {STATE_DIR.as_posix()}/')
     if SINAIS_CONFIRMADOS_LOG is not None:
-        print(f'Sinais confirmados: {SINAIS_CONFIRMADOS_LOG.as_posix()}')
+        print(f'Sinais confirmados (ordens aceitas): {SINAIS_CONFIRMADOS_LOG.as_posix()}')
+    if SINAIS_ACIONAVEIS_LOG is not None:
+        print(f'Sinais acionáveis (decisão de entrar): {SINAIS_ACIONAVEIS_LOG.as_posix()}')
     print('=' * 70)
     print('\n🚀 Iniciando...\n')
 
