@@ -47,29 +47,20 @@ purchase_buffer_seconds = 1
 #### `[MARKET]` — Segurança e Universo de Ativos M5
 ```ini
 [MARKET]
-# SEGURANÇA: impede operações ao vivo em OTC quando a conta for REAL
-# Recomendado manter false para conta real
-allow_otc_live = false
+# OTC em conta real: true = permite (padrão v13+), false = bloqueia.
+allow_otc_live = true
 
 # --- Universo de ativos para M5 ---
-# Controla quais mercados o bot usa ao montar o pool de ativos no M5.
-# As duas flags são independentes e podem ser combinadas livremente.
-#
-# m5_allow_otc = true           → inclui ativos OTC  (ex: AUDCAD-OTC)
-# m5_allow_open_market = true   → inclui ativos de mercado aberto (ex: EURUSD-OP)
-#
-# Combinações possíveis:
-#   otc=true  + open_market=true  → pool MISTO OTC + mercado aberto (padrão)
-#   otc=true  + open_market=false → apenas OTC
-#   otc=false + open_market=true  → apenas mercado aberto
+# Gerenciado automaticamente pelo perfil de mercado selecionado no menu.
+# Você também pode forçar manualmente se não quiser usar o menu de perfil.
 m5_allow_otc         = true
 m5_allow_open_market = true
 ```
 
-> ⚠️ **Importante:** Quando `allow_otc_live = false` (padrão), o bot **aborta
-> automaticamente** se você tentar operar em conta REAL + OTC. Operações reais
-> devem usar apenas Mercado Aberto (ativos `-OP`). Isso se aplica também ao M5
-> quando `m5_allow_otc = true`.
+> 📝 Para M5, o menu de inicialização apresenta perfis **OTC / OPEN / MISTO**
+> que definem automaticamente `m5_allow_otc` e `m5_allow_open_market` além de
+> carregar os thresholds ATR/ADX/slope/janela calibrados para aquele mercado.
+> Você não precisa editar esses flags manualmente entre execuções.
 
 > 📝 **Para M1**, o mercado é selecionado interativamente no menu de inicialização.
 > Os flags `m5_allow_otc` e `m5_allow_open_market` são exclusivos do M5.
@@ -227,24 +218,109 @@ O bot usa os seguintes padrões (implementados com regras objetivas):
 
 ## Segurança: OTC em Conta Real
 
-> ⚠️ **IMPORTANTE**
+> ℹ️ **Novo comportamento padrão (v13)**
 
-Por padrão (`allow_otc_live = false`), o bot **bloqueia automaticamente**
-qualquer tentativa de operar em OTC usando conta REAL.
+Por padrão (`allow_otc_live = true`), o bot **permite** operar em OTC com
+conta REAL. Para bloquear OTC em conta real, defina `allow_otc_live = false`.
 
-Isso protege de operações acidentais em ativos OTC com dinheiro real.
-
-**Para testes em DEMO:** pode usar OTC à vontade (incluindo pool misto M5).
-
-**Para operar real:** use apenas Mercado Aberto (ativos com sufixo `-OP`).
-Configure `m5_allow_otc = false` e `m5_allow_open_market = true` para garantir
-que o M5 não tente entrar em OTC em conta real.
-
-**Se precisar habilitar OTC em real (não recomendado):**
 ```ini
 [MARKET]
+# true  = permite OTC em conta real (padrão v13+)
+# false = bloqueia OTC em conta real (proteção explícita)
 allow_otc_live = true
 ```
+
+> ⚠️ Ao bloquear (`allow_otc_live = false`), qualquer tentativa de usar OTC
+> em conta REAL faz o bot abortar no início com mensagem explicativa.
+
+---
+
+## Perfis de Mercado M5 (OTC / OPEN / MISTO)
+
+A partir da v13, o menu de inicialização M5 apresenta uma seleção de **perfil
+de mercado** em vez de ler os flags diretamente do config.txt. Cada perfil
+define:
+
+- Quais ativos entram no universo (OTC, -OP ou ambos).
+- Thresholds calibrados para o tipo de mercado (ADX, ATR, BB, slope, janela).
+
+| Perfil | Seção config.txt | Ativos | ADX_min | ATR_min_ratio | BB_min | slope_min |
+|--------|-----------------|--------|---------|--------------|--------|-----------|
+| **OTC**   | `[PROFILE_OTC]`   | apenas OTC   | 10.0 | 0.000010 | 0.00045 | 0.000015 |
+| **OPEN**  | `[PROFILE_OPEN]`  | apenas -OP   | 14.0 | 0.000020 | 0.00060 | 0.000030 |
+| **MISTO** | `[PROFILE_MISTO]` | OTC + -OP   | 10.0 | 0.000010 | 0.00045 | 0.000015 |
+
+### Como funciona no menu
+
+```
+🌍 PERFIL DE MERCADO M5
+======================================================================
+  1) OTC   — apenas ativos OTC (24/7)
+  2) OPEN  — apenas Mercado Aberto (ativos -OP)
+  3) MISTO — OTC + Mercado Aberto (pool misto)
+```
+
+Ao selecionar um perfil, o bot carrega automaticamente todos os thresholds
+da seção correspondente (`[PROFILE_OTC]`, `[PROFILE_OPEN]`, `[PROFILE_MISTO]`)
+no `config.txt`, sem necessidade de editar manualmente os parâmetros.
+
+### Personalizar um perfil
+
+Para ajustar os thresholds de um perfil, edite a seção correspondente:
+
+```ini
+[PROFILE_OTC]
+m5_allow_otc         = true
+m5_allow_open_market = false
+adx_min              = 10.0
+atr_min_ratio        = 0.000010
+bb_width_min         = 0.00045
+slope_min            = 0.000015
+entry_window_seconds = 25
+```
+
+---
+
+## Seleção Inicial de Ativos por Ranking (M5 + Pool Dinâmico)
+
+Quando o pool dinâmico M5 está ativo (`pool_dynamic_enable = true`), o bot
+**não** toma os primeiros N ativos do `Ativos.txt` em ordem — em vez disso,
+executa um ranking de todos os candidatos elegíveis no universo e seleciona
+o pool inicial pelos **melhor pontuados**.
+
+### Algoritmo de ranking
+
+Para cada candidato elegível (aberto, tipo de mercado correto, no Ativos.txt):
+
+1. **Payout** — obtido via `API.get_all_profit()` (digital preferido, binary
+   fallback). Fallback para 80% quando a API não retorna o valor.
+2. **Regime M5** — score normalizado baseado em:
+   - `ATR_ratio / ATR_MIN_M5` (volatilidade)
+   - `ADX / ADX_MIN_M5` (força de tendência)
+   - `BB_width / BB_WIDTH_MIN_M5` (expansão de Bollinger)
+3. **Score final** = `0.4 × regime_norm + 0.6 × payout`
+4. Seleciona os top `pool_size` ativos (determinístico, sem aleatoriedade).
+
+### Log de seleção
+
+O ranking completo é exibido no console e gravado em
+`logs/pool_rebalance_m5.log`:
+
+```
+📊 [STARTUP RANKING M5] Avaliando 128 candidatos (pool_size=2)...
+  Pos  Ativo                  Score  Detalhes
+  ---  --------------------  -------  -------
+    1  USDINR-OTC             0.846  score=0.846 payout=82% atr=2.10x adx=12.5(1.25x) bbw=1.80x ✅
+    2  USDCHF-OTC             0.831  score=0.831 payout=80% atr=1.90x adx=11.2(1.12x) bbw=1.65x ✅
+    3  AUDCAD-OTC             0.812  score=0.812 payout=80% atr=1.75x ...
+  ...
+
+  🎯 Pool inicial selecionado: USDINR-OTC, USDCHF-OTC
+```
+
+> 📝 O pool dinâmico M5 continua usando sua lógica de rebalanceamento
+> periódico normal após a seleção inicial. O ranking de startup apenas
+> determina quais ativos compõem o **primeiro** pool.
 
 ---
 
@@ -404,13 +480,15 @@ Os arquivos de log ficam na pasta `logs/`:
 - ✅ Pivôs/Fractais (5 barras) para contexto estrutural
 - ✅ Padrões Engolfo Bullish/Bearish e Pinça Top/Bottom
 - ✅ Estratégia Respiro (continuação: impulso → pullback → entrada)
-- ✅ Restrição de OTC em conta real
 - ✅ Pool Dinâmico M5: janela móvel de scoring, Donchian dead-market, escalonamento por universo, remoção imediata de asset_closed, novos pesos (pending_timeout, latency_guard, win/loss trade), freeze_skip throttle
 - ✅ M5 pool misto: suporte configurável a OTC + mercado aberto via `m5_allow_otc` / `m5_allow_open_market`; sniper M5 ativo por padrão
+- ✅ Perfis de mercado M5 (OTC / OPEN / MISTO): menu interativo carrega thresholds ATR/ADX/slope/janela calibrados por tipo de mercado
+- ✅ Seleção inicial de pool M5 por ranking (payout + ATR/ADX health) em vez de ordem do Ativos.txt
+- ✅ OTC em conta real habilitado por padrão (`allow_otc_live = true`); mantido como toggle configurável
 - 🗂️ M15 — estrutura reservada no config.txt, lógica a implementar futuramente
 
 ---
 
 ## Versão
 
-`2026-04-05-m5-open-market-v9`
+`2026-04-05-m5-profiles-startup-ranking-v13`
