@@ -1029,16 +1029,18 @@ def _patch_websocket_on_close(api_obj) -> None:
         if _orig is None:
             return
 
-        def _safe_on_close(*args, **kwargs):  # noqa: ANN001
+        def _safe_on_close(*args, **kwargs):
             try:
                 _orig()
-            except TypeError:
+            except TypeError as _te:
+                # Assinatura nova (3 args): tenta passar ws como primeiro argumento
+                _log_error("on_close: TypeError com 0 args; tentando com ws arg.", _te)
                 try:
                     _orig(args[0] if args else None)
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as _e2:
+                    _log_error("on_close: falha mesmo com ws arg.", _e2)
+            except Exception as _e:
+                _log_error("on_close: exceção inesperada no handler.", _e)
 
         ws_obj.on_close = _safe_on_close
     except Exception:
@@ -1102,8 +1104,13 @@ def _ensure_connected() -> bool:
                 print(cgreen(f"✅ Reconectado (tentativa {attempt})."))
                 return True
         except TypeError as exc:
-            # Incompatibilidade de assinatura websocket on_close — reconectar é seguro
-            _log_error(f"Reconexão tentativa {attempt}: TypeError websocket (on_close). Continuando.", exc)
+            # TypeError após _patch_websocket_on_close indica que o patch não funcionou
+            # para esta versão do iqoptionapi — registrar como aviso e continuar.
+            _log_error(
+                f"Reconexão tentativa {attempt}: TypeError inesperado (patch on_close pode "
+                f"não ter funcionado nesta versão do iqoptionapi). Continuando.", exc
+            )
+            print(cyellow(f"⚠️  Reconexão tentativa {attempt}: TypeError websocket. Continuando..."))
         except Exception as exc:
             _log_error(f"Reconexão tentativa {attempt} falhou.", exc)
         print(cyellow(f"🔄 Reconectando... ({attempt}/{_RECONNECT_MAX_ATTEMPTS})"))
@@ -1360,7 +1367,7 @@ def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
             _log_error("Erro ao buscar candles (get_server_timestamp).", e)
         if attempt < max_tentativas - 1:
             time.sleep(sleep_s)
-            sleep_s = min(sleep_s * 2, 8.0)  # backoff exponencial, teto 8s
+            sleep_s = min(sleep_s * 2, 8.0)  # backoff exponencial; permanece em 8s após atingir o teto
         else:
             _log_error(
                 f"get_candles_safe: esgotou {max_tentativas} tentativas para "
@@ -4493,7 +4500,10 @@ def loop_patterns_multi(
                 p = per_asset_pending.get(a)
                 if p is None:
                     return False
-                _ecf = int(p.get("expected_confirm_from", 0))
+                try:
+                    _ecf = int(p.get("expected_confirm_from", 0) or 0)
+                except (ValueError, TypeError):
+                    return True  # ECF corrompido → tratar como elegível
                 if _ecf == 0:
                     return True  # no ECF info → assume eligible
                 _pmode = p.get("pattern_mode", "v15")
@@ -4597,7 +4607,10 @@ def loop_patterns_multi(
                 # Fallback: wall-clock age > PENDING_MAX_AGE_SECONDS_M5 (guards against
                 # signals with invalid/missing ECF that would otherwise linger forever).
                 if tf_min == 5:
-                    _ecf_ttl = int(pend.get("expected_confirm_from", 0))
+                    try:
+                        _ecf_ttl = int(pend.get("expected_confirm_from", 0) or 0)
+                    except (ValueError, TypeError):
+                        _ecf_ttl = 0  # ECF corrompido → skip ECF-based check
                     _pmode_ttl = pend.get("pattern_mode", "v15")
                     _win_ttl = SNIPER_WINDOW_SECONDS_M5 if _pmode_ttl == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
                     _ecf_expired = (_ecf_ttl > 0 and now_server > _ecf_ttl + _win_ttl)
