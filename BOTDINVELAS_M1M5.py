@@ -3534,7 +3534,8 @@ def _get_asset_payout(ativo: str, ot: Dict[str, Any]) -> float:
                             pass
     except Exception:
         pass
-    return 0.80  # default fallback payout
+    return 0.80  # Fallback: 80% é o payout típico IQ Option para digital OTC/Open.
+                 # Usado quando API.get_all_profit() falha ou não retorna o ativo.
 
 
 def _startup_rank_m5_pool(
@@ -3591,9 +3592,18 @@ def _startup_rank_m5_pool(
                 atr_norm = adx_norm = bbw_norm = regime_score = 0.0
 
             payout = _get_asset_payout(ativo, ot)
-            # Normalise regime score: cap at 3.0 (1.0 per component at exactly threshold)
+            # Regime score: sum of 3 normalized components (ATR, ADX, BBW), each ≥1.0
+            # when at or above threshold. Cap at 2.0 to bound contribution and prevent
+            # a single outlier asset from dominating purely on regime without payout.
+            # Divide by 3.0 to map [0..3] → [0..1] before applying the 2.0 cap.
             regime_norm = min(regime_score / 3.0, 2.0)
-            final_score = 0.4 * regime_norm + 0.6 * payout
+            # Score formula: regime contributes 40%, payout contributes 60%.
+            # Payout weight is higher because a low payout directly reduces expected
+            # value regardless of regime quality, while regime is already pre-filtered
+            # by ADX/ATR thresholds during signal generation.
+            _REGIME_WEIGHT = 0.4
+            _PAYOUT_WEIGHT = 0.6
+            final_score = _REGIME_WEIGHT * regime_norm + _PAYOUT_WEIGHT * payout
 
             breakdown = (
                 f"score={final_score:.3f} payout={payout:.0%} "
