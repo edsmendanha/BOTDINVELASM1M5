@@ -175,10 +175,10 @@ slope_lookback      = 8
 # OTC TEST: reduzido de 0.000040 → 0.000015 (mercado OTC muito lateral)
 slope_min           = 0.000015
 
-entry_window_seconds = 20
+entry_window_seconds = 25
 
-# Máximo de ativos simultâneos para M5 (padrão: 4)
-max_assets = 4
+# Máximo de ativos simultâneos para M5 (padrão recomendado para teste sniper: 2)
+max_assets = 2
 
 # --- Motor de Reversão V15 ---
 v15_score_min           = 55
@@ -206,16 +206,15 @@ m5_extreme_candles = 20
 m5_extreme_frac    = 0.20
 
 # Freeze window: when pending signal detected, focus only on that asset for N seconds
-# 0 = disable freeze (reverts to original round-robin behavior)
-pending_freeze_seconds_m5 = 2
+# 0 = disable freeze (recomendado para sniper multi-ativo: evita freeze_skip
+# que usava now_server stale; o mecanismo candle-based do v12 já é suficiente)
+pending_freeze_seconds_m5 = 0
 
 # Max age (seconds) for a pending M5 signal — fallback guard only.
-# AVISO: a partir da v11, o bot usa como TTL primário a comparação entre
-# now_server e expected_confirm_from + entry_window (ou sniper_window).
-# Este parâmetro só se aplica a sinais SEM expected_confirm_from válido
-# (edge case de dados corrompidos). Na prática pode ser deixado em 0 para
-# confiar apenas na lógica ECF-based.
-# 0 = desativar o fallback por idade de detecção (recomendado com v11+)
+# AVISO: a partir da v12, o bot usa timing candle-based (velas[-1]["from"]) para
+# determinar se a janela sniper ainda está aberta. Este parâmetro só se aplica
+# a sinais SEM expected_confirm_from válido (edge case de dados corrompidos).
+# 0 = desativar o fallback por idade de detecção (recomendado com v12+)
 pending_max_age_seconds_m5 = 0
 
 # --- Canal Keltner ---
@@ -238,17 +237,18 @@ respiro_max_pullback_candles = 3
 respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
 
-# --- Estratégia ARM + SNIPER 0–20s (M5) ---
+# --- Estratégia ARM + SNIPER 0–25s (M5) ---
 # Quando sniper_mode=true, o bot arma o sinal na vela fechada com score elevado
 # (arm_score_min) e executa SOMENTE nos primeiros sniper_window_seconds após a
 # abertura da vela alvo. Anti-fakeout: CALL preço>=open | PUT preço<=open.
 # sniper_antifakeout_extreme=true bloqueia também violação do extremo anterior.
-# OTC TEST: sniper ativo com janela de 20s (era 5s) para reduzir rejections por timing.
+# v12: timing candle-based — secs_from_open usa velas[-1]["from"] (feed real)
+# em vez de now_server - ECF, evitando expiry prematura por drift/atraso de feed.
 sniper_mode                  = true
 arm_score_min                = 60
 fallback_arm_score_min       = 50
-# OTC TEST: aumentado de 5 → 20s — janela mais generosa para capturar entrada segura
-sniper_window_seconds        = 20
+# OTC TEST: janela de 25s — robusta com timing candle-based do v12
+sniper_window_seconds        = 25
 sniper_antifakeout_extreme   = false
 
 # =============================================================================
