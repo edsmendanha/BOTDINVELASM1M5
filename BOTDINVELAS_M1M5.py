@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-04-m5-quality-timing-v10"
+BOTDIN_VERSION = "2026-04-05-m5-quality-timing-v11"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -1004,6 +1004,47 @@ def write_preset_file(preset_path: Path, preset_data: Dict[str, Any]):
 # =========================
 # IQ connect / utils
 # =========================
+def _patch_websocket_on_close(api_obj) -> None:
+    """Corrige incompatibilidade de assinatura do on_close no websocket-client ≥0.58.
+
+    Versões recentes do websocket-client chamam on_close(ws, close_status_code, close_msg)
+    (3 args), mas o iqoptionapi define on_close(self) (1 arg), causando TypeError no
+    fechamento do socket. Fazemos monkey-patch para aceitar qualquer assinatura.
+    """
+    try:
+        ws_obj = None
+        # Tenta diferentes caminhos de acesso ao objeto WebSocketApp interno
+        for attr_path in (('api', 'wss'), ('api', 'ws'), ('wss',), ('ws',)):
+            obj = api_obj
+            for attr in attr_path:
+                obj = getattr(obj, attr, None)
+                if obj is None:
+                    break
+            if obj is not None:
+                ws_obj = obj
+                break
+        if ws_obj is None:
+            return
+        _orig = getattr(ws_obj, 'on_close', None)
+        if _orig is None:
+            return
+
+        def _safe_on_close(*args, **kwargs):  # noqa: ANN001
+            try:
+                _orig()
+            except TypeError:
+                try:
+                    _orig(args[0] if args else None)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        ws_obj.on_close = _safe_on_close
+    except Exception:
+        pass
+
+
 def connect():
     global API
     print('BOTDIN_VERSION =', BOTDIN_VERSION)
@@ -1013,6 +1054,7 @@ def connect():
     if not ok:
         print('\n❌ Falha na conexão:', reason)
         sys.exit(1)
+    _patch_websocket_on_close(API)
     print('✅ Conectado.')
 
 
@@ -1050,6 +1092,7 @@ def _ensure_connected() -> bool:
         try:
             ok, reason = API.connect()
             if ok:
+                _patch_websocket_on_close(API)
                 if conta:
                     try:
                         API.change_balance(conta)
@@ -1058,6 +1101,9 @@ def _ensure_connected() -> bool:
                 _last_connect_check_ts = time.time()
                 print(cgreen(f"✅ Reconectado (tentativa {attempt})."))
                 return True
+        except TypeError as exc:
+            # Incompatibilidade de assinatura websocket on_close — reconectar é seguro
+            _log_error(f"Reconexão tentativa {attempt}: TypeError websocket (on_close). Continuando.", exc)
         except Exception as exc:
             _log_error(f"Reconexão tentativa {attempt} falhou.", exc)
         print(cyellow(f"🔄 Reconectando... ({attempt}/{_RECONNECT_MAX_ATTEMPTS})"))
@@ -1289,11 +1335,14 @@ def can_purchase_now(ativo, period_minutes=1, chave_preferida=None):
 
 
 def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
-    """Busca candles com fallback de múltiplos end_ts para reduzir falhas/atrasos.
+    """Busca candles com fallback de múltiplos end_ts e backoff exponencial.
 
     Tenta primeiro end_ts=agora; se insuficiente, tenta agora-tf e agora+tf para
     contornar edge cases de sincronização do servidor (inspirado em 3EM1_IQ_v9-1).
+    Entre falhas consecutivas aplica backoff exponencial (0.5s → 1s → 2s → 4s …)
+    para reduzir pressão sobre o websocket em caso de timeout.
     """
+    sleep_s = 0.5
     for attempt in range(max_tentativas):
         try:
             base_ts = API.get_server_timestamp()
@@ -1309,7 +1358,14 @@ def get_candles_safe(ativo: str, timeframe: int, qnt: int, max_tentativas=6):
                         _log_error(f"get_candles_safe offset={offset}s falhou.", e_inner)
         except Exception as e:
             _log_error("Erro ao buscar candles (get_server_timestamp).", e)
-        time.sleep(0.5)
+        if attempt < max_tentativas - 1:
+            time.sleep(sleep_s)
+            sleep_s = min(sleep_s * 2, 8.0)  # backoff exponencial, teto 8s
+        else:
+            _log_error(
+                f"get_candles_safe: esgotou {max_tentativas} tentativas para "
+                f"ativo={ativo} tf={timeframe}s qnt={qnt}. Retornando None."
+            )
     return None
 
 
@@ -4427,18 +4483,22 @@ def loop_patterns_multi(
 
         # --- M5 pending-first freeze: focus only on assets with pending signals ---
         if tf_min == 5 and PENDING_FREEZE_SECONDS_M5 > 0:
-            # Separate pendings into eligible (within TTL) and stale.
-            # Missing detected_ts is treated as age=0 (eligible), preserving backward compat.
+            # Separate pendings into eligible (entry window still open) and stale.
+            # A pending is eligible when now_server <= expected_confirm_from + entry_window,
+            # i.e. there is still time to execute the signal.  For arm_sniper mode the
+            # effective window is sniper_window_seconds; for all others it is
+            # entry_window_seconds_m5.  Unknown ECF (0) → treated as eligible.
             _now_wall = time.time()
             def _pend_eligible(a: str) -> bool:
                 p = per_asset_pending.get(a)
                 if p is None:
                     return False
-                if PENDING_MAX_AGE_SECONDS_M5 <= 0:
-                    return True
-                _dts = p.get("detected_ts") or 0.0
-                _age = (_now_wall - _dts) if _dts > 0 else 0.0
-                return _age <= PENDING_MAX_AGE_SECONDS_M5
+                _ecf = int(p.get("expected_confirm_from", 0))
+                if _ecf == 0:
+                    return True  # no ECF info → assume eligible
+                _pmode = p.get("pattern_mode", "v15")
+                _win = SNIPER_WINDOW_SECONDS_M5 if _pmode == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
+                return now_server <= _ecf + _win
 
             pending_assets = [(a, c) for a, c in list(active_ativos) if per_asset_pending.get(a) is not None]
             eligible_pending_assets = [(a, c) for a, c in pending_assets if _pend_eligible(a)]
@@ -4452,19 +4512,22 @@ def loop_patterns_multi(
                     f"— ativos: {freeze_names}"
                 )
             elif pending_assets and not eligible_pending_assets and not freeze_active:
-                # All pendings are stale — skip freeze, will be dropped per-asset below.
-                # Throttle logging to once per PENDING_MAX_AGE_SECONDS_M5 per asset
-                # to avoid spam when the stale condition persists across many cycles.
+                # All pendings are stale (entry window already closed) — skip freeze.
+                # Throttle logging to once per 30s per asset to avoid log spam.
                 _skip_now = time.time()
-                _throttle_s = max(PENDING_MAX_AGE_SECONDS_M5, 30.0)
+                _throttle_s = 30.0
                 for a, _ in pending_assets:
                     _last_skip = _freeze_skip_last_logged.get(a, 0.0)
                     if (_skip_now - _last_skip) >= _throttle_s:
+                        _p = per_asset_pending.get(a)
+                        _ecf_log = int(_p.get("expected_confirm_from", 0)) if _p else 0
+                        _pmode_log = (_p.get("pattern_mode", "v15") if _p else "v15")
+                        _win_log = SNIPER_WINDOW_SECONDS_M5 if _pmode_log == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
                         _log_blocked(
                             "freeze_skip",
                             f"ativo={a} tf={tf_min} "
-                            f"reason=all_pendings_stale "
-                            f"pend_max_age={PENDING_MAX_AGE_SECONDS_M5}"
+                            f"reason=entry_window_closed "
+                            f"ecf={_ecf_log} win={_win_log} now_server={now_server}"
                         )
                         if M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("freeze_skip", a)
@@ -4527,26 +4590,44 @@ def loop_patterns_multi(
                 continue
 
             if pend is not None and pend_id is not None:
-                # M5 pending TTL: drop stale pendings that can no longer enter early.
-                # Missing detected_ts is treated as age=0 (eligible), same as _pend_eligible.
-                if tf_min == 5 and PENDING_MAX_AGE_SECONDS_M5 > 0:
+                # M5 pending TTL: drop stale pendings whose entry window has already closed.
+                # Primary check: entry window closed relative to expected_confirm_from.
+                #   - arm_sniper mode: now_server > ecf + sniper_window
+                #   - v15/respiro/fallback: now_server > ecf + entry_window_seconds
+                # Fallback: wall-clock age > PENDING_MAX_AGE_SECONDS_M5 (guards against
+                # signals with invalid/missing ECF that would otherwise linger forever).
+                if tf_min == 5:
+                    _ecf_ttl = int(pend.get("expected_confirm_from", 0))
+                    _pmode_ttl = pend.get("pattern_mode", "v15")
+                    _win_ttl = SNIPER_WINDOW_SECONDS_M5 if _pmode_ttl == "arm_sniper" else ENTRY_WINDOW_SECONDS_M5
+                    _ecf_expired = (_ecf_ttl > 0 and now_server > _ecf_ttl + _win_ttl)
+                    # Fallback wall-clock guard (only when ECF is unknown/zero)
                     _pend_detected_ts = pend.get("detected_ts") or 0.0
                     _pend_age = (time.time() - _pend_detected_ts) if _pend_detected_ts > 0 else 0.0
-                    if _pend_age > PENDING_MAX_AGE_SECONDS_M5:
+                    _age_expired = (
+                        _ecf_ttl == 0
+                        and PENDING_MAX_AGE_SECONDS_M5 > 0
+                        and _pend_age > PENDING_MAX_AGE_SECONDS_M5
+                    )
+                    if _ecf_expired or _age_expired:
+                        _timeout_reason = (
+                            f"ecf_window_closed ecf={_ecf_ttl} win={_win_ttl} now={now_server}"
+                            if _ecf_expired
+                            else f"age_guard secs_elapsed={_pend_age:.1f} max={PENDING_MAX_AGE_SECONDS_M5}"
+                        )
                         _log_blocked(
                             "pending_timeout",
                             f"ativo={ativo} tf={tf_min} "
                             f"dir={pend.get('direction_hint', '?')} "
                             f"patt={pend.get('pattern_name', '?')} "
-                            f"mode={pend.get('pattern_mode', '?')} "
+                            f"mode={_pmode_ttl} "
                             f"pattern_from={pend.get('pattern_from', '')} "
-                            f"expected_confirm_from={pend.get('expected_confirm_from', '')} "
-                            f"secs_elapsed={_pend_age:.1f} "
-                            f"window={PENDING_MAX_AGE_SECONDS_M5}"
+                            f"expected_confirm_from={_ecf_ttl} "
+                            f"reason={_timeout_reason}"
                         )
                         _log_sinal(ativo, tf_min, "pending_timeout", pend,
                                    block_reason="pending_timeout",
-                                   details=f"secs_elapsed={_pend_age:.1f}")
+                                   details=_timeout_reason)
                         if M5_POOL_DYNAMIC_ENABLE:
                             _m5_track("pending_timeout", ativo)
                         per_asset_pending[ativo] = None

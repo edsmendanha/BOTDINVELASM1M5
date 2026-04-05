@@ -210,12 +210,14 @@ m5_extreme_frac    = 0.20
 # 0 = disable freeze (reverts to original round-robin behavior)
 pending_freeze_seconds_m5 = 2
 
-# Max age (seconds) for a pending M5 signal before it is dropped instead of retrying.
-# IMPORTANT: deve ser MAIOR que entry_window_seconds (20s) para que o pending não expire
-# antes da janela de entrada. Logs mostravam pending_timeout com secs_elapsed~21 e
-# window=15 — pending expirava antes da janela de entrada. Agora 25 > 20 + buffer.
-# 0 = disable (rely only on PENDING_EXPIRE_CANDLES TTL from confirm_pending)
-pending_max_age_seconds_m5 = 25
+# Max age (seconds) for a pending M5 signal — fallback guard only.
+# AVISO: a partir da v11, o bot usa como TTL primário a comparação entre
+# now_server e expected_confirm_from + entry_window (ou sniper_window).
+# Este parâmetro só se aplica a sinais SEM expected_confirm_from válido
+# (edge case de dados corrompidos). Na prática pode ser deixado em 0 para
+# confiar apenas na lógica ECF-based.
+# 0 = desativar o fallback por idade de detecção (recomendado com v11+)
+pending_max_age_seconds_m5 = 0
 
 # --- Canal Keltner ---
 keltner_enable = true
