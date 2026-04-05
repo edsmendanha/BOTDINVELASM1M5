@@ -44,17 +44,35 @@ tipo = digital          # tipo padrão: digital ou binarias
 purchase_buffer_seconds = 1
 ```
 
-#### `[MARKET]` — Segurança
+#### `[MARKET]` — Segurança e Universo de Ativos M5
 ```ini
 [MARKET]
 # SEGURANÇA: impede operações ao vivo em OTC quando a conta for REAL
 # Recomendado manter false para conta real
 allow_otc_live = false
+
+# --- Universo de ativos para M5 ---
+# Controla quais mercados o bot usa ao montar o pool de ativos no M5.
+# As duas flags são independentes e podem ser combinadas livremente.
+#
+# m5_allow_otc = true           → inclui ativos OTC  (ex: AUDCAD-OTC)
+# m5_allow_open_market = true   → inclui ativos de mercado aberto (ex: EURUSD-OP)
+#
+# Combinações possíveis:
+#   otc=true  + open_market=true  → pool MISTO OTC + mercado aberto (padrão)
+#   otc=true  + open_market=false → apenas OTC
+#   otc=false + open_market=true  → apenas mercado aberto
+m5_allow_otc         = true
+m5_allow_open_market = true
 ```
 
 > ⚠️ **Importante:** Quando `allow_otc_live = false` (padrão), o bot **aborta
 > automaticamente** se você tentar operar em conta REAL + OTC. Operações reais
-> devem usar apenas Mercado Aberto (ativos `-OP`).
+> devem usar apenas Mercado Aberto (ativos `-OP`). Isso se aplica também ao M5
+> quando `m5_allow_otc = true`.
+
+> 📝 **Para M1**, o mercado é selecionado interativamente no menu de inicialização.
+> Os flags `m5_allow_otc` e `m5_allow_open_market` são exclusivos do M5.
 
 #### `[SLEEP]`
 ```ini
@@ -216,9 +234,11 @@ qualquer tentativa de operar em OTC usando conta REAL.
 
 Isso protege de operações acidentais em ativos OTC com dinheiro real.
 
-**Para testes em DEMO:** pode usar OTC à vontade.
+**Para testes em DEMO:** pode usar OTC à vontade (incluindo pool misto M5).
 
 **Para operar real:** use apenas Mercado Aberto (ativos com sufixo `-OP`).
+Configure `m5_allow_otc = false` e `m5_allow_open_market = true` para garantir
+que o M5 não tente entrar em OTC em conta real.
 
 **Se precisar habilitar OTC em real (não recomendado):**
 ```ini
@@ -229,6 +249,12 @@ allow_otc_live = true
 ---
 
 ## Arquivo Ativos.txt
+
+O arquivo `Ativos.txt` define o universo de ativos que o bot pode operar.
+Os ativos podem ser OTC (`-OTC`), mercado aberto (`-OP`) ou sem sufixo
+(incluídos em qualquer modo).
+
+O pool misto M5 (padrão) aceita qualquer combinação de ativos listada:
 
 ```
 [DIGITAL M1]
@@ -243,10 +269,20 @@ EURJPY-OP
 [DIGITAL M5]
 EURUSD-OP
 EURJPY-OP
+AUDCAD-OTC
+USDZAR-OTC
 
 [BINARIA M5]
 EURUSD-OP
+AUDCAD-OTC
 ```
+
+> 📝 Quando `m5_allow_otc=true` e `m5_allow_open_market=true` (padrão), o bot
+> inclui no pool M5 **qualquer** ativo da lista — tanto `-OTC` quanto `-OP`.
+> Quando um ativo é **excluído** por um desses flags, o bot registra a razão
+> em `logs/blocked_reasons_*.log` com o prefixo `market_filter_skip`, por exemplo:
+> - `market_filter_skip [m5_allow_otc=false]` → ativo OTC ignorado porque OTC está desativado
+> - `market_filter_skip [m5_allow_open_market=false]` → ativo -OP ignorado porque mercado aberto está desativado
 
 ---
 
@@ -370,10 +406,11 @@ Os arquivos de log ficam na pasta `logs/`:
 - ✅ Estratégia Respiro (continuação: impulso → pullback → entrada)
 - ✅ Restrição de OTC em conta real
 - ✅ Pool Dinâmico M5: janela móvel de scoring, Donchian dead-market, escalonamento por universo, remoção imediata de asset_closed, novos pesos (pending_timeout, latency_guard, win/loss trade), freeze_skip throttle
+- ✅ M5 pool misto: suporte configurável a OTC + mercado aberto via `m5_allow_otc` / `m5_allow_open_market`; sniper M5 ativo por padrão
 - 🗂️ M15 — estrutura reservada no config.txt, lógica a implementar futuramente
 
 ---
 
 ## Versão
 
-`2026-04-04-dynamic-pool-m5-v8`
+`2026-04-05-m5-open-market-v9`
