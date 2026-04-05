@@ -230,6 +230,7 @@ ATR_PERIOD = 14
 ATR_ADAPTIVE_WINDOW = 30
 ATR_ADAPTIVE_FACTOR = 0.45        # Fator adaptativo para M1 (menos pressão no thr)
 ATR_MAX_THR_M1 = 0.00014          # Cap do threshold ATR adaptativo para M1 (teto dinâmico)
+ATR_MAX_THR_M5 = 0.00100          # Cap do threshold ATR adaptativo para M5 (teto dinâmico)
 ATR_MIN_RATIO_ABS_M1 = 0.000002   # ← AJUSTE: volatilidade mínima M1 (0.000010 = livre)
 ATR_MIN_RATIO_ABS_M5 = 0.000020
 ATR_RATIO_QUEUE_M1 = deque(maxlen=ATR_ADAPTIVE_WINDOW)
@@ -393,7 +394,7 @@ def _load_from_config() -> None:
     global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
     global ALLOW_OTC_LIVE
     global ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR
-    global ATR_MIN_RATIO_ABS_M1, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M1
+    global ATR_MIN_RATIO_ABS_M1, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M1, ATR_MAX_THR_M5
     global ATR_RATIO_QUEUE_M1, ATR_RATIO_QUEUE_M5
     global ENABLE_TREND_STRENGTH_FILTER, ADX_PERIOD
     global ADX_MIN_M1, ADX_MIN_M5, BB_PERIOD, BB_STD
@@ -474,9 +475,17 @@ def _load_from_config() -> None:
         else:
             globals()['ENTRY_MODE_M1'] = em
 
-        # ATR
+        # ATR — M1 and M5 both load the full set of ATR parameters.
+        # Shared globals (ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR)
+        # are loaded by both TFs; since _load_tf('M1') runs first and _load_tf('M5') second,
+        # M5 values win when they differ. The per-TF caps (ATR_MAX_THR_M1/M5) are independent.
         if is_m5:
             globals()['ATR_MIN_RATIO_ABS_M5'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M5, float)
+            globals()['ENABLE_ATR_FILTER'] = _cfgbool(sec, 'enable_atr_filter', ENABLE_ATR_FILTER)
+            globals()['ATR_PERIOD'] = _cfgget(sec, 'atr_period', ATR_PERIOD, int)
+            globals()['ATR_ADAPTIVE_WINDOW'] = _cfgget(sec, 'atr_adaptive_window', ATR_ADAPTIVE_WINDOW, int)
+            globals()['ATR_ADAPTIVE_FACTOR'] = _cfgget(sec, 'atr_adaptive_factor', ATR_ADAPTIVE_FACTOR, float)
+            globals()['ATR_MAX_THR_M5'] = _cfgget(sec, 'atr_max_thr', ATR_MAX_THR_M5, float)
         else:
             globals()['ENABLE_ATR_FILTER'] = _cfgbool(sec, 'enable_atr_filter', ENABLE_ATR_FILTER)
             globals()['ATR_PERIOD'] = _cfgget(sec, 'atr_period', ATR_PERIOD, int)
@@ -1434,9 +1443,11 @@ def adaptive_atr_threshold_update(tf_min: int, atr_ratio: Optional[float]) -> fl
             return base
         med = statistics.median(list(q))
         dyn = max(base, med * ATR_ADAPTIVE_FACTOR)
-        # Cap do threshold adaptativo para M1: evita que suba demais e trave entradas
+        # Cap do threshold adaptativo por TF: evita que suba demais e trave entradas
         if tf_min == 1:
             dyn = min(dyn, ATR_MAX_THR_M1)
+        elif tf_min == 5:
+            dyn = min(dyn, ATR_MAX_THR_M5)
         return max(base, dyn)
     except Exception:
         return base
@@ -2560,6 +2571,8 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
         _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
         secs_from_open = now_server - expected_confirm_from
         if secs_from_open > _sniper_win:
+            _log_blocked("sniper_window_expired",
+                         f"tf={tf_min} secs_from_open={secs_from_open:.1f} window={_sniper_win} dir={direction_hint or 'unknown'}")
             return "rejected", None
 
         # Busca a vela alvo (em formação: velas[-1] quando API já a entregou)
