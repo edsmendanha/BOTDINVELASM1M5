@@ -279,9 +279,10 @@ AUDCAD-OTC
 
 > 📝 Quando `m5_allow_otc=true` e `m5_allow_open_market=true` (padrão), o bot
 > inclui no pool M5 **qualquer** ativo da lista — tanto `-OTC` quanto `-OP`.
-> Ativos filtrados pelo mercado são registrados em `blocked_reasons_*.log`
-> com motivo `market_filter_skip [m5_allow_otc=false]` ou
-> `market_filter_skip [m5_allow_open_market=false]`.
+> Quando um ativo é **excluído** por um desses flags, o bot registra a razão
+> em `logs/blocked_reasons_*.log` com o prefixo `market_filter_skip`, por exemplo:
+> - `market_filter_skip [m5_allow_otc=false]` → ativo OTC ignorado porque OTC está desativado
+> - `market_filter_skip [m5_allow_open_market=false]` → ativo -OP ignorado porque mercado aberto está desativado
 
 ---
 

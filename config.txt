@@ -41,8 +41,8 @@ allow_otc_live = false
 #   otc=false + open_market=false → erro (pool vazio) — evite esta combinação
 #
 # Nota de segurança: OTC em conta REAL ainda requer allow_otc_live=true.
-m5_allow_otc          = true
-m5_allow_open_market  = true
+m5_allow_otc         = true
+m5_allow_open_market = true
 
 # =============================================================================
 [SLEEP]

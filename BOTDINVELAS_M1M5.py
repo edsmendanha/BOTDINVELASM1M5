@@ -3214,16 +3214,13 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         return '-OTC' not in name_u and '-OP' not in name_u
 
     def _passes_market_filter(name_u: str) -> bool:
-        is_otc_asset = '-OTC' in name_u
-        is_op_asset = '-OP' in name_u
-        has_no_suffix = _has_no_market_suffix(name_u)
         if use_otc and allow_open_market:
             # Pool misto: aceita tudo (OTC, -OP e sem sufixo)
             return True
         elif use_otc:
-            return is_otc_asset or has_no_suffix
+            return '-OTC' in name_u or _has_no_market_suffix(name_u)
         elif allow_open_market:
-            return (is_op_asset or has_no_suffix) and not is_otc_asset
+            return ('-OP' in name_u or _has_no_market_suffix(name_u)) and '-OTC' not in name_u
         else:
             return False
 
@@ -3262,18 +3259,25 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
     result: List[Tuple[str, str]] = []
     used: set = set()
 
-    # Detecta ativos que estão em Ativos.txt mas foram filtrados pelo mercado
-    # (ex: ativo OTC quando m5_allow_otc=false, ou ativo -OP quando allow_open_market=false)
+    # Detecta ativos que estão em Ativos.txt mas foram filtrados pelo mercado.
+    # Emite log em blocked_reasons quando m5_allow_otc=false ou m5_allow_open_market=false.
     def _market_filter_skip_reason(name_u: str) -> Optional[str]:
-        """Retorna razão de skip por filtro de mercado, ou None se não filtrado."""
+        """Retorna razão de skip por filtro de mercado, ou None se não filtrado.
+
+        Casos tratados:
+        - Ativo -OTC quando m5_allow_otc=false → "m5_allow_otc=false"
+        - Ativo -OP quando m5_allow_open_market=false → "m5_allow_open_market=false"
+        - Ativo sem sufixo quando ambos disabled → "m5_allow_otc=false+m5_allow_open_market=false"
+        - Pool misto (ambos=true) → None (nada filtrado)
+        """
         if use_otc and allow_open_market:
-            return None  # pool misto — nada é filtrado
-        is_otc_asset = '-OTC' in name_u
-        is_op_asset = '-OP' in name_u
-        if is_otc_asset and not use_otc:
+            return None  # pool misto — nada é filtrado por mercado
+        if '-OTC' in name_u and not use_otc:
             return "m5_allow_otc=false"
-        if is_op_asset and not allow_open_market:
+        if '-OP' in name_u and not allow_open_market:
             return "m5_allow_open_market=false"
+        if _has_no_market_suffix(name_u) and not use_otc and not allow_open_market:
+            return "m5_allow_otc=false+m5_allow_open_market=false"
         return None
 
     # 1ª passagem: ativos da lista DIGITAL do Ativos.txt que estejam abertos
@@ -4957,7 +4961,9 @@ def loop_patterns_multi(
                 secs_left = seconds_left_in_period(tf_min)
 
                 # Re-verificar digital/binária antes de cada entrada (respeitando modo OTC/mercado)
-                # Em modo misto (OTC + mercado aberto), preserva o mercado do ativo detectado.
+                # Em modo misto (OTC + mercado aberto): determina o mercado pelo sufixo do ativo
+                # para não forçar -OTC em ativos -OP ou vice-versa.
+                # Em modo exclusivo (apenas OTC ou apenas open): usa o flag global `use_otc`.
                 _asset_otc_mode = use_otc if not allow_open_market else ('-OTC' in _bs_ativo.upper())
                 trade_ativo, trade_chave = resolve_trade_variant(_bs_ativo, _bs_chave, use_otc=_asset_otc_mode)
                 market_type_label = "DIGITAL" if trade_chave == 'digital' else "BINÁRIA"
@@ -5204,6 +5210,7 @@ if __name__ == '__main__':
         print(f"\n🌍 M5 Mercado (config): {market_label}")
     else:
         use_otc = ask_market_type()
+        # M1 usa seleção exclusiva: OTC OU mercado aberto, nunca os dois simultaneamente.
         allow_open_market = not use_otc
         market_label = "OTC" if use_otc else "Mercado Aberto"
 
