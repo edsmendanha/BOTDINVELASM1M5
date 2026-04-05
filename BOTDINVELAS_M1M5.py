@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-05-m5-sniper-timing-v12"
+BOTDIN_VERSION = "2026-04-05-m5-profiles-startup-ranking-v13"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -350,8 +350,8 @@ RESPIRO_MAX_PULLBACK_CANDLES_M5: int = 3
 RESPIRO_TRIGGER_M5: str = "close_over_high"
 RESPIRO_CONFIRM_POLLS_M5: int = 1
 
-# Restrição de OTC em conta real
-ALLOW_OTC_LIVE: bool = False
+# Restrição de OTC em conta real (true = permite por padrão; configure false para bloquear)
+ALLOW_OTC_LIVE: bool = True
 
 # M5 market universe flags (configuráveis em [MARKET] no config.txt)
 # m5_allow_otc=true  → pool M5 inclui ativos OTC
@@ -3427,6 +3427,209 @@ def ask_market_type() -> bool:
         print("❌ Opção inválida!")
 
 
+def _load_market_profile(profile_name: str) -> None:
+    """Aplica perfil de mercado (OTC, OPEN ou MISTO) lido do config.txt.
+
+    Atualiza os globals M5_ALLOW_OTC, M5_ALLOW_OPEN_MARKET e os thresholds
+    de regime M5 (ADX_MIN_M5, ATR_MIN_RATIO_ABS_M5, BB_WIDTH_MIN_M5,
+    SLOPE_MIN_M5, ENTRY_WINDOW_SECONDS_M5) com os valores da seção
+    [PROFILE_OTC], [PROFILE_OPEN] ou [PROFILE_MISTO] do config.txt.
+
+    Retorna silenciosamente sem alterar nada se a seção não existir.
+    """
+    global M5_ALLOW_OTC, M5_ALLOW_OPEN_MARKET
+    global ADX_MIN_M5, ATR_MIN_RATIO_ABS_M5, BB_WIDTH_MIN_M5, SLOPE_MIN_M5
+    global ENTRY_WINDOW_SECONDS_M5
+
+    key_map = {
+        'OTC':   'PROFILE_OTC',
+        'OPEN':  'PROFILE_OPEN',
+        'MISTO': 'PROFILE_MISTO',
+    }
+    section = key_map.get(profile_name.upper())
+    if section is None or config.get(section) is None:
+        return
+
+    M5_ALLOW_OTC = _cfgbool(section, 'm5_allow_otc', M5_ALLOW_OTC)
+    M5_ALLOW_OPEN_MARKET = _cfgbool(section, 'm5_allow_open_market', M5_ALLOW_OPEN_MARKET)
+    ADX_MIN_M5 = _cfgget(section, 'adx_min', ADX_MIN_M5, float)
+    ATR_MIN_RATIO_ABS_M5 = _cfgget(section, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M5, float)
+    BB_WIDTH_MIN_M5 = _cfgget(section, 'bb_width_min', BB_WIDTH_MIN_M5, float)
+    SLOPE_MIN_M5 = _cfgget(section, 'slope_min', SLOPE_MIN_M5, float)
+    ENTRY_WINDOW_SECONDS_M5 = _cfgget(section, 'entry_window_seconds', ENTRY_WINDOW_SECONDS_M5, int)
+
+
+def ask_market_profile_m5() -> Tuple[bool, bool, str]:
+    """Menu interativo de seleção de perfil de mercado para M5.
+
+    Retorna (use_otc, allow_open_market, profile_name) e aplica o perfil
+    correspondente carregando os thresholds de [PROFILE_OTC/OPEN/MISTO]
+    do config.txt.
+
+    Perfis disponíveis:
+      1) OTC   — apenas ativos OTC; thresholds calibrados para OTC.
+      2) OPEN  — apenas Mercado Aberto (-OP); thresholds calibrados.
+      3) MISTO — OTC + Mercado Aberto; thresholds intermediários (legado).
+    """
+    print("\n" + "=" * 70)
+    print("🌍 PERFIL DE MERCADO M5")
+    print("=" * 70)
+    print("  1) " + ccyan("OTC")   + "   — apenas ativos OTC (24/7)")
+    print("  2) " + cyellow("OPEN") + "  — apenas Mercado Aberto (ativos -OP)")
+    print("  3) " + cbold("MISTO") + "  — OTC + Mercado Aberto (pool misto)")
+    print()
+    print("  Cada perfil carrega thresholds de ATR/ADX/slope/janela")
+    print("  calibrados para aquele tipo de mercado.")
+
+    while True:
+        r = input("\n👉 Digite 1, 2 ou 3 [1]: ").strip() or "1"
+        if r == "1":
+            profile = "OTC"
+            use_otc, allow_open_market = True, False
+            break
+        if r == "2":
+            profile = "OPEN"
+            use_otc, allow_open_market = False, True
+            break
+        if r == "3":
+            profile = "MISTO"
+            use_otc, allow_open_market = True, True
+            break
+        print("❌ Opção inválida! Digite 1, 2 ou 3.")
+
+    _load_market_profile(profile)
+    print(f"✅ Perfil {cbold(profile)} aplicado.")
+    return use_otc, allow_open_market, profile
+
+
+def _get_asset_payout(ativo: str, ot: Dict[str, Any]) -> float:
+    """Retorna o payout estimado do ativo (0.0–1.0) para fins de ranking.
+
+    Tenta, em ordem:
+    1. API.get_all_profit() → profit_percentage (digital preferred).
+    2. Fallback: payout padrão de 0.80 (80%) quando não é possível obter.
+
+    Retorna valor entre 0.0 e 1.0 (e.g. 0.82 = 82% payout).
+    """
+    try:
+        profits = API.get_all_profit()
+        if isinstance(profits, dict):
+            norm = _normalize_asset_name(ativo)
+            for cat in ('digital', 'binary', 'turbo'):
+                cat_data = profits.get(cat, {})
+                if not isinstance(cat_data, dict):
+                    continue
+                for k, v in cat_data.items():
+                    if _normalize_asset_name(k) == norm:
+                        if isinstance(v, dict):
+                            p = v.get('1min') or v.get('5min') or v.get('profit') or next(iter(v.values()), None)
+                        else:
+                            p = v
+                        try:
+                            pf = float(p)
+                            if pf > 1.0:
+                                pf /= 100.0
+                            return max(0.0, min(1.0, pf))
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return 0.80  # default fallback payout
+
+
+def _startup_rank_m5_pool(
+    candidates: List[Tuple[str, str]],
+    pool_size: int,
+) -> List[Tuple[str, str]]:
+    """Seleciona o pool inicial M5 por ranking: payout + saúde ATR/ADX.
+
+    Para cada candidato elegível (aberto, mercado correto):
+      - Busca payout (digital preferido, binary fallback).
+      - Computa score de regime M5: ATR_ratio/ATR_MIN + ADX/ADX_MIN + BBW/BB_MIN.
+      - Score final = 0.4 * regime_score_normalizado + 0.6 * payout_score.
+    Seleciona os top `pool_size` ativos pelo score final (determinístico).
+    Loga breakdown completo no console e em STARTUP_RANKING_LOG (se configurado).
+
+    Retorna lista de (ativo, categoria) dos top-N selecionados.
+    Se candidates estiver vazio, retorna lista vazia (o loop tratará o pool vazio).
+    """
+    if not candidates:
+        return []
+
+    print(f"\n📊 [STARTUP RANKING M5] Avaliando {len(candidates)} candidatos "
+          f"(pool_size={pool_size})...")
+
+    try:
+        ot = API.get_all_open_time()
+    except Exception:
+        ot = {}
+
+    scored: List[Tuple[float, str, str, str]] = []  # (score, ativo, cat, breakdown)
+
+    for ativo, cat in candidates:
+        try:
+            velas = get_candles_safe(ativo, 5 * 60, 30)
+            has_candles = bool(velas and len(velas) >= 15)
+
+            if has_candles:
+                closes = [float(v["close"]) for v in velas]
+                atr = calculate_atr_from_candles(velas, periodo=ATR_PERIOD) or 0.0
+                mean_close = (sum(closes[-ATR_PERIOD:]) / ATR_PERIOD
+                              if len(closes) >= ATR_PERIOD else (closes[-1] if closes else 1.0))
+                atr_ratio = atr / mean_close if mean_close > 0 else 0.0
+                atr_norm = atr_ratio / max(ATR_MIN_RATIO_ABS_M5, 1e-12)
+
+                adx = adx_from_candles(velas, period=ADX_PERIOD) or 0.0
+                adx_norm = adx / max(ADX_MIN_M5, 1e-3)
+
+                bbw = bb_width_norm(closes, period=BB_PERIOD, std_mult=BB_STD) or 0.0
+                bbw_norm = bbw / max(BB_WIDTH_MIN_M5, 1e-12)
+
+                regime_score = atr_norm + adx_norm + bbw_norm
+            else:
+                atr_ratio = adx = bbw = 0.0
+                atr_norm = adx_norm = bbw_norm = regime_score = 0.0
+
+            payout = _get_asset_payout(ativo, ot)
+            # Normalise regime score: cap at 3.0 (1.0 per component at exactly threshold)
+            regime_norm = min(regime_score / 3.0, 2.0)
+            final_score = 0.4 * regime_norm + 0.6 * payout
+
+            breakdown = (
+                f"score={final_score:.3f} payout={payout:.0%} "
+                f"atr={atr_norm:.2f}x adx={adx:.1f}({adx_norm:.2f}x) "
+                f"bbw={bbw_norm:.2f}x regime={regime_norm:.3f}"
+            )
+            scored.append((final_score, ativo, cat, breakdown))
+        except Exception as exc:
+            scored.append((0.0, ativo, cat, f"erro={exc}"))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    print(f"  {'Pos':>3}  {'Ativo':<20} {'Score':>7}  Detalhes")
+    print(f"  {'---':>3}  {'-'*20} {'-------':>7}  -------")
+    for i, (sc, av, ct, bd) in enumerate(scored):
+        marker = " ✅" if i < pool_size else ""
+        print(f"  {i+1:>3}  {display_asset_name(av):<20} {sc:>7.3f}  {bd}{marker}")
+
+    selected = [(av, ct) for _, av, ct, _ in scored[:pool_size]]
+    selected_names = ", ".join(display_asset_name(a) for a, _ in selected)
+    print(f"\n  🎯 Pool inicial selecionado: {selected_names}")
+
+    if POOL_REBALANCE_LOG_M5 is not None:
+        try:
+            with POOL_REBALANCE_LOG_M5.open('a', encoding='utf-8') as f:
+                f.write(f"\n{datetime.now().isoformat()} | {INSTANCE_TAG} | "
+                        f"[STARTUP RANKING M5] candidatos={len(candidates)} pool={pool_size}\n")
+                for i, (sc, av, ct, bd) in enumerate(scored):
+                    mark = " SELECTED" if i < pool_size else ""
+                    f.write(f"  {i+1:>3}. {display_asset_name(av)} {bd}{mark}\n")
+        except Exception:
+            pass
+
+    return selected
+
+
 def ask_num_assets(tf_min: int = 5) -> int:
     """Pergunta quantos ativos operar simultaneamente, respeitando o cap por TF.
 
@@ -5192,29 +5395,28 @@ if __name__ == '__main__':
     TIMEFRAME_MINUTES = ask_timeframe()
 
     # Tipo de mercado
-    # M5: determinado pelos flags de config m5_allow_otc / m5_allow_open_market
+    # M5: seleção interativa de perfil (OTC / OPEN / MISTO) com carregamento de thresholds
     # M1: seleção interativa (OTC ou Mercado Aberto)
     if TIMEFRAME_MINUTES == 5:
-        use_otc = M5_ALLOW_OTC
-        allow_open_market = M5_ALLOW_OPEN_MARKET
+        use_otc, allow_open_market, active_profile = ask_market_profile_m5()
         if use_otc and allow_open_market:
             market_label = "OTC + Mercado Aberto (misto)"
         elif use_otc:
             market_label = "OTC"
-        elif allow_open_market:
-            market_label = "Mercado Aberto"
         else:
-            print("\n⚠️  AVISO: m5_allow_otc=false e m5_allow_open_market=false — nenhum mercado habilitado para M5.")
-            print("  Habilite ao menos um mercado no config.txt [MARKET].")
+            market_label = "Mercado Aberto"
+        print(f"\n🌍 M5 Mercado (perfil {active_profile}): {market_label}")
+        if not use_otc and not allow_open_market:
+            print("\n⚠️  AVISO: nenhum mercado habilitado — verifique [PROFILE_*] no config.txt.")
             sys.exit(1)
-        print(f"\n🌍 M5 Mercado (config): {market_label}")
     else:
         use_otc = ask_market_type()
         # M1 usa seleção exclusiva: OTC OU mercado aberto, nunca os dois simultaneamente.
         allow_open_market = not use_otc
         market_label = "OTC" if use_otc else "Mercado Aberto"
+        active_profile = "OTC" if use_otc else "OPEN"
 
-    # ─── RESTRIÇÃO DE SEGURANÇA: OTC bloqueado em conta REAL ──────────────
+    # ─── RESTRIÇÃO DE SEGURANÇA: OTC em conta REAL (configurável) ────────
     if conta == 'REAL' and use_otc and not ALLOW_OTC_LIVE:
         print("\n" + "=" * 70)
         print("🚫 ATENÇÃO — OPERAÇÃO BLOQUEADA POR SEGURANÇA")
@@ -5223,11 +5425,11 @@ if __name__ == '__main__':
         print("  Operações ao vivo em conta real são permitidas somente em")
         print("  Mercado Aberto (ativos -OP), não em OTC.")
         print()
-        print("  Para alterar esse comportamento, edite config.txt:")
+        print("  Para habilitar OTC em conta real, edite config.txt:")
         print("    [MARKET]")
-        print("    allow_otc_live = true   ← (não recomendado)")
+        print("    allow_otc_live = true")
         if TIMEFRAME_MINUTES == 5:
-            print("  Ou desative OTC para M5 com:  m5_allow_otc = false")
+            print("  Ou selecione o perfil OPEN no próximo início.")
         print("=" * 70)
         sys.exit(1)
 
@@ -5258,24 +5460,7 @@ if __name__ == '__main__':
     RIGIDEZ_MODE = "normal"
     _apply_rigidez()
 
-    # Montar lista de ativos inicial a partir do Ativos.txt
-    print(f"\n🔍 Buscando ativos do Ativos.txt — seções [DIGITAL M{TIMEFRAME_MINUTES}] e [BINARIA M{TIMEFRAME_MINUTES}]...")
-    digital_lista_init, binaria_lista_init = load_ativos_por_categoria(TIMEFRAME_MINUTES)
-    tf_label_init = f"M{TIMEFRAME_MINUTES}"
-    if not digital_lista_init and not binaria_lista_init:
-        print(
-            f"⚠️  Nenhuma seção [DIGITAL {tf_label_init}] ou [BINARIA {tf_label_init}] "
-            "encontrada no Ativos.txt. Verifique o arquivo."
-        )
-    ativos_lista = build_asset_list(use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES,
-                                    allow_open_market=allow_open_market)
-    if not ativos_lista:
-        print(
-            f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe M{TIMEFRAME_MINUTES} "
-            "escolhido. Aguardando abertura..."
-        )
-
-    # Inicializar paths de log com tag automática
+    # Inicializar paths de log com tag automática (antes do ranking para logar seleção)
     if TIMEFRAME_MINUTES == 5:
         if use_otc and allow_open_market:
             market_tag = "misto"
@@ -5288,6 +5473,36 @@ if __name__ == '__main__':
     auto_tag = f"m{TIMEFRAME_MINUTES}_{market_tag}_{max_ativos}ativos"
     _init_paths_with_tag(auto_tag)
     _ensure_csv_headers()
+
+    # Montar lista de ativos inicial a partir do Ativos.txt
+    print(f"\n🔍 Buscando ativos do Ativos.txt — seções [DIGITAL M{TIMEFRAME_MINUTES}] e [BINARIA M{TIMEFRAME_MINUTES}]...")
+    digital_lista_init, binaria_lista_init = load_ativos_por_categoria(TIMEFRAME_MINUTES)
+    tf_label_init = f"M{TIMEFRAME_MINUTES}"
+    if not digital_lista_init and not binaria_lista_init:
+        print(
+            f"⚠️  Nenhuma seção [DIGITAL {tf_label_init}] ou [BINARIA {tf_label_init}] "
+            "encontrada no Ativos.txt. Verifique o arquivo."
+        )
+
+    # Para M5 com pool dinâmico: seleciona pool inicial por ranking (payout + ATR/ADX).
+    # Para M1 e M5 sem pool dinâmico: usa build_asset_list em ordem do Ativos.txt.
+    if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
+        all_candidates = build_candidate_pool(
+            use_otc=use_otc, limit=200, tf_min=TIMEFRAME_MINUTES,
+            allow_open_market=allow_open_market,
+        )
+        ativos_lista = _startup_rank_m5_pool(all_candidates, pool_size=max_ativos)
+    else:
+        ativos_lista = build_asset_list(
+            use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES,
+            allow_open_market=allow_open_market,
+        )
+
+    if not ativos_lista:
+        print(
+            f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe M{TIMEFRAME_MINUTES} "
+            "escolhido. Aguardando abertura..."
+        )
 
     nome = get_profile_name()
 
@@ -5303,10 +5518,12 @@ if __name__ == '__main__':
     if TIMEFRAME_MINUTES == 5:
         _m5_otc_flag = "on" if M5_ALLOW_OTC else "off"
         _m5_op_flag = "on" if M5_ALLOW_OPEN_MARKET else "off"
-        print(f'M5 Mercados: m5_allow_otc={_m5_otc_flag} | m5_allow_open_market={_m5_op_flag}')
+        print(f'M5 Perfil: {active_profile} | m5_allow_otc={_m5_otc_flag} | m5_allow_open_market={_m5_op_flag}')
     modo_label = "REVERSÃO (V15)" if ENTRY_MODE == "reversal" else "CONTINUAÇÃO (Respiro)"
     print(f'Timeframe: M{TIMEFRAME_MINUTES} | Modo: {modo_label} | Carteira: Ativos.txt')
     print(f'Prioridade: [DIGITAL M{TIMEFRAME_MINUTES}] → [BINARIA M{TIMEFRAME_MINUTES}] (fallback apenas se faltar digital aberta)')
+    startup_method = "ranking (payout+ATR/ADX)" if (TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE) else "ordem Ativos.txt"
+    print(f'Seleção inicial: {startup_method}')
     print(f'Ativos: {len(ativos_lista)}/{max_ativos}')
     print('Ativos selecionados:')
     for a, ak in ativos_lista:

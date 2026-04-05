@@ -19,10 +19,9 @@ purchase_buffer_seconds = 1
 # =============================================================================
 [MARKET]
 # =============================================================================
-# SEGURANÇA: impede operações ao vivo em OTC quando a conta for REAL.
-# false = bloquear OTC em conta real (padrão recomendado)
-# true  = permitir OTC em conta real (apenas para testes)
-allow_otc_live = false
+# OTC em conta real: true = permite (padrão), false = bloqueia.
+# Mantenha false se quiser proteção extra contra operar OTC em conta real.
+allow_otc_live = true
 
 # --- Universo de ativos para M5 ---
 # Controla quais mercados o bot considera ao montar o pool de ativos M5.
@@ -357,3 +356,61 @@ dead_market_penalty          = 5.0
 # keltner_enable         = true
 # pivot_enable           = true
 # respiro_enable         = false
+
+# =============================================================================
+# [PROFILE_OTC] — Perfil de mercado: apenas OTC (24/7, baixa volatilidade)
+# =============================================================================
+# Aplicado automaticamente quando o menu M5 seleciona "OTC" (perfil 1).
+# Thresholds calibrados para o comportamento OTC: mercado mais lateral,
+# comprimido e com ADX/ATR tipicamente mais baixos que mercado aberto.
+#
+# Para alterar os valores padrão do perfil, edite esta seção.
+[PROFILE_OTC]
+# Flags de universo
+m5_allow_otc         = true
+m5_allow_open_market = false
+
+# Filtros de regime M5 (calibrados para OTC)
+adx_min              = 10.0
+atr_min_ratio        = 0.000010
+bb_width_min         = 0.00045
+slope_min            = 0.000015
+entry_window_seconds = 25
+
+# =============================================================================
+# [PROFILE_OPEN] — Perfil de mercado: apenas Mercado Aberto (ativos -OP)
+# =============================================================================
+# Aplicado automaticamente quando o menu M5 seleciona "Mercado Aberto" (perfil 2).
+# Thresholds calibrados para o comportamento do mercado regular: maior
+# volatilidade, ADX/ATR mais altos e movimentos mais direcionais.
+#
+# Para alterar os valores padrão do perfil, edite esta seção.
+[PROFILE_OPEN]
+# Flags de universo
+m5_allow_otc         = false
+m5_allow_open_market = true
+
+# Filtros de regime M5 (calibrados para mercado aberto)
+adx_min              = 14.0
+atr_min_ratio        = 0.000020
+bb_width_min         = 0.00060
+slope_min            = 0.000030
+entry_window_seconds = 20
+
+# =============================================================================
+# [PROFILE_MISTO] — Perfil de mercado: OTC + Mercado Aberto (misto)
+# =============================================================================
+# Aplicado automaticamente quando o menu M5 seleciona "Misto" (perfil 3).
+# Usa thresholds intermediários que funcionam razoavelmente em ambos os
+# tipos de ativo. Equivale ao comportamento legado (pré-perfis).
+[PROFILE_MISTO]
+# Flags de universo
+m5_allow_otc         = true
+m5_allow_open_market = true
+
+# Filtros de regime M5 (intermediários OTC+Open)
+adx_min              = 10.0
+atr_min_ratio        = 0.000010
+bb_width_min         = 0.00045
+slope_min            = 0.000015
+entry_window_seconds = 25
