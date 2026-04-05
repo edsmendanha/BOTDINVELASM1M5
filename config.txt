@@ -160,21 +160,20 @@ atr_period          = 14
 atr_adaptive_window = 30
 atr_adaptive_factor = 0.45
 atr_max_thr         = 0.00100
-atr_min_ratio       = 0.000020
+# OTC TEST: reduzido de 0.000020 para ser menos bloqueante em OTC (ratio ~0.0008 nos logs)
+atr_min_ratio       = 0.000010
 
 enable_trend_filter = true
 adx_period          = 14
-# Reduzido de 18 → 14: logs mostravam ADX 11-15 frequente em mercado aberto,
-# bloqueando quase tudo. Com 14, aceita tendências razoáveis sem entrar em lateral puro.
-adx_min             = 14
+# OTC TEST: reduzido de 14 → 10 (logs mostravam ADX ~10–12 constante, bloqueando tudo)
+adx_min             = 10.0
 bb_period           = 20
 bb_std              = 2.0
-bb_width_min        = 0.00070
+# OTC TEST: reduzido de 0.00070 → 0.00045 (OTC tem compressão maior que mercado aberto)
+bb_width_min        = 0.00045
 slope_lookback      = 8
-# Reduzido de 0.00006 → 0.00004: slope observado nos logs era 0.00001-0.00005,
-# então 0.00006 bloqueava a maioria das entradas M5. Compromisso: aceita tendência
-# real, corta lateral extremo.
-slope_min           = 0.000040
+# OTC TEST: reduzido de 0.000040 → 0.000015 (mercado OTC muito lateral)
+slope_min           = 0.000015
 
 entry_window_seconds = 20
 
@@ -239,16 +238,17 @@ respiro_max_pullback_candles = 3
 respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
 
-# --- Estratégia ARM + SNIPER 0–5s (M5) ---
+# --- Estratégia ARM + SNIPER 0–20s (M5) ---
 # Quando sniper_mode=true, o bot arma o sinal na vela fechada com score elevado
 # (arm_score_min) e executa SOMENTE nos primeiros sniper_window_seconds após a
 # abertura da vela alvo. Anti-fakeout: CALL preço>=open | PUT preço<=open.
 # sniper_antifakeout_extreme=true bloqueia também violação do extremo anterior.
-# Defaults: false (mantém comportamento V15 confirm-pending original).
-sniper_mode                  = false
-arm_score_min                = 65
-fallback_arm_score_min       = 60
-sniper_window_seconds        = 5
+# OTC TEST: sniper ativo com janela de 20s (era 5s) para reduzir rejections por timing.
+sniper_mode                  = true
+arm_score_min                = 60
+fallback_arm_score_min       = 50
+# OTC TEST: aumentado de 5 → 20s — janela mais generosa para capturar entrada segura
+sniper_window_seconds        = 20
 sniper_antifakeout_extreme   = false
 
 # =============================================================================
@@ -259,14 +259,15 @@ sniper_antifakeout_extreme   = false
 # for better candidates from the Ativos.txt universe.
 #
 # Safe default: false (preserves original behavior; set to true to activate).
-pool_dynamic_enable          = false
+# OTC TEST: ativado para rotação automática de ativos M5.
+pool_dynamic_enable          = true
 
 # How often (minutes) to trigger a rebalance check
-pool_rebalance_minutes       = 15
+pool_rebalance_minutes       = 10
 
 # Pool is considered "dead" if no detected/confirmed event occurred in this
 # many minutes across all pool assets — triggers a more aggressive swap.
-pool_dead_minutes            = 10
+pool_dead_minutes            = 6
 
 # Max assets to swap per rebalance under normal conditions
 pool_swap_max_normal         = 1
@@ -275,7 +276,7 @@ pool_swap_max_normal         = 1
 pool_swap_max_dead           = 2
 
 # Cooldown (minutes) before a removed asset can re-enter the pool
-pool_asset_cooldown_minutes  = 30
+pool_asset_cooldown_minutes  = 20
 
 # --- Universe-size-aware swap scaling ---
 # When true, n_swap increases proportionally to the number of eligible external
@@ -284,7 +285,7 @@ pool_asset_cooldown_minutes  = 30
 pool_swap_scale_with_universe = true
 pool_swap_universe_divisor    = 8
 # Absolute cap on swaps per rebalance cycle (regardless of scaling)
-pool_swap_max_abs             = 4
+pool_swap_max_abs             = 3
 
 # --- Scoring window ---
 # Rolling window in minutes for computing the per-asset score.
