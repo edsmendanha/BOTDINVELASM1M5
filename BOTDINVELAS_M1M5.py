@@ -1037,7 +1037,7 @@ def _ensure_connected() -> bool:
     global API, _last_connect_check_ts
     now_t = time.time()
     if now_t - _last_connect_check_ts < _RECONNECT_CHECK_INTERVAL_S:
-        return True  # Assume still connected; timeout will force recheck
+        return True  # still within check interval; skip check_connect() overhead
     _last_connect_check_ts = now_t
     try:
         if API is not None and API.check_connect():
