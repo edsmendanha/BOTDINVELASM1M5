@@ -360,9 +360,85 @@ AUDCAD-OTC
 > - `market_filter_skip [m5_allow_otc=false]` → ativo OTC ignorado porque OTC está desativado
 > - `market_filter_skip [m5_allow_open_market=false]` → ativo -OP ignorado porque mercado aberto está desativado
 
+### Símbolos de Índice (JXY, EXY, BXY, CXY, AXY, DXY)
+
+Esses seis símbolos não possuem sufixo `-OP` na IQ Option, mas são tratados
+internamente como **ativos de mercado aberto** (equivalentes a `-OP`):
+
+| Símbolo | Descrição |
+|---------|-----------|
+| `DXY`   | Dollar Index (USD) |
+| `EXY`   | Euro Index (EUR) |
+| `JXY`   | Yen Index (JPY) |
+| `BXY`   | Pound Index (GBP) |
+| `AXY`   | Australian Dollar Index (AUD) |
+| `CXY`   | Canadian Dollar Index (CAD) |
+
+**Regras de elegibilidade:**
+
+| Perfil | Elegível? |
+|--------|-----------|
+| **OPEN** (`m5_allow_open_market=true`) | ✅ Sim |
+| **MISTO** (`m5_allow_otc=true` + `m5_allow_open_market=true`) | ✅ Sim |
+| **OTC-only** (`m5_allow_open_market=false`) | ❌ Não (bloqueado com razão `m5_allow_open_market=false(index)`) |
+
+Liste-os normalmente no `Ativos.txt` sem nenhum sufixo:
+
+```
+[DIGITAL M5]
+JXY
+EXY
+BXY
+CXY
+AXY
+DXY
+```
+
 ---
 
-## Pool Dinâmico M5 (`pool_dynamic_enable = true`)
+## Watchdog de Conexão — Modo SAFE/HOLD e Reconexão Automática
+
+O bot inclui um **watchdog de conexão** que detecta estados de degradação da
+conexão com a IQ Option e entra automaticamente em modo **SAFE/HOLD** para
+evitar operações com dados inconsistentes.
+
+### Sinais de degradação detectados
+
+| Sinal | Ação |
+|-------|------|
+| Warnings `"late 30 sec"` repetidos (3×) | Entra em SAFE/HOLD |
+| API retorna `None` onde `dict` era esperado (`NoneType subscriptable`) | Entra em SAFE/HOLD imediatamente |
+| `WebSocketConnectionClosedException` | Entra em SAFE/HOLD + força re-check imediato |
+| `check_connect()` falha | Entra em SAFE/HOLD + inicia reconexão |
+
+### Comportamento em SAFE/HOLD
+
+- Novas decisões de trading são **suspensas**.
+- Estados `arm`/`sniper` pendentes são **limpos** (sinais stale não são executados).
+- O log registra claramente o motivo: `🔴 [WATCHDOG] SAFE/HOLD ativado — <razão>`.
+- O bot continua executando o loop, aguardando reconexão.
+
+### Reconexão com backoff exponencial
+
+O processo de reconexão usa backoff exponencial (5s → 10s → 20s → … → 120s)
+com até 10 tentativas, em vez do backoff fixo anterior (5 tentativas × 5s):
+
+```
+⚠️  Conexão perdida. Tentando reconectar...
+🔄 Reconectando... (1/10) aguardando 5s
+🔄 Reconectando... (2/10) aguardando 10s
+...
+✅ Reconectado (tentativa 3).
+🟢 [WATCHDOG] SAFE/HOLD desativado — conexão restaurada. Aguardando candle novo por ativo.
+```
+
+### Retomada após reconexão
+
+Após sair de SAFE/HOLD, o bot **aguarda pelo menos 1 candle novo** por ativo
+rastreado antes de retomar análises. Isso garante que o sinal seguinte seja
+baseado em dados frescos, e não em dados anteriores à queda de conexão.
+
+---
 
 O Pool Dinâmico M5 é ativado na seção `[M5]` do `config.txt` e permite que
 o bot troque automaticamente os ativos do pool durante a operação, priorizando
@@ -485,10 +561,12 @@ Os arquivos de log ficam na pasta `logs/`:
 - ✅ Perfis de mercado M5 (OTC / OPEN / MISTO): menu interativo carrega thresholds ATR/ADX/slope/janela calibrados por tipo de mercado
 - ✅ Seleção inicial de pool M5 por ranking (payout + ATR/ADX health) em vez de ordem do Ativos.txt
 - ✅ OTC em conta real habilitado por padrão (`allow_otc_live = true`); mantido como toggle configurável
+- ✅ Símbolos de índice sem sufixo (JXY, EXY, BXY, CXY, AXY, DXY) tratados como mercado aberto — elegíveis em OPEN e MISTO, excluídos em OTC-only
+- ✅ Watchdog de conexão SAFE/HOLD: detecta late_warnings, NoneType subscriptable, WebSocketConnectionClosedException; backoff exponencial (5s→120s, 10 tentativas); aguarda candle novo por ativo após reconexão
 - 🗂️ M15 — estrutura reservada no config.txt, lógica a implementar futuramente
 
 ---
 
 ## Versão
 
-`2026-04-05-m5-profiles-startup-ranking-v13`
+`2026-04-06-watchdog-index-symbols-v14`

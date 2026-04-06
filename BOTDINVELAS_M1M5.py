@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-05-m5-profiles-startup-ranking-v13"
+BOTDIN_VERSION = "2026-04-06-watchdog-index-symbols-v14"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -198,6 +198,13 @@ ASSET_ALIASES: Dict[str, str] = {
     "CADDOLLARINDEX":        "CXY",
     "CADINDEX":              "CXY",
 }
+
+# Index symbols without -OP/-OTC suffix that are treated as OPEN-market candidates.
+# These are eligible in OPEN and MIXED profiles when the market is open, but excluded
+# in OTC-only profile (same rule as any other -OP asset).
+OPEN_MARKET_INDEX_SYMBOLS: frozenset = frozenset({
+    "JXY", "EXY", "BXY", "CXY", "AXY", "DXY",
+})
 
 PURCHASE_BUFFER_SECONDS = int(config.get('AJUSTES', {}).get('purchase_buffer_seconds', 1))
 
@@ -1115,12 +1122,94 @@ def connect():
     print('✅ Conectado.')
 
 
-# Configuração de reconexão automática
-_RECONNECT_MAX_ATTEMPTS: int = 5
-_RECONNECT_SLEEP_S: float = 5.0
+# Configuração de reconexão automática com backoff exponencial
+_RECONNECT_MAX_ATTEMPTS: int = 10
+_RECONNECT_BACKOFF_BASE_S: float = 5.0   # backoff inicial (dobra a cada tentativa)
+_RECONNECT_BACKOFF_MAX_S: float = 120.0  # backoff máximo entre tentativas
 # Intervalo mínimo entre verificações de conexão (segundos): evita overhead em loop rápido
 _RECONNECT_CHECK_INTERVAL_S: float = 30.0
 _last_connect_check_ts: float = 0.0
+
+# ---- Watchdog / SAFE-HOLD mode ----
+# Ativado quando a conexão está degradada (warnings "late 30 sec", NoneType subscriptable,
+# WebSocketConnectionClosedException). Suprime novas decisões de trading até reconexão.
+_SAFE_HOLD_MODE: bool = False
+_SAFE_HOLD_TRIGGERED_AT: float = 0.0
+# Contadores de sinais de degradação (resetados ao reconectar)
+_DEGRADED_LATE_WARNINGS: int = 0
+_DEGRADED_LATE_WARNING_THRESHOLD: int = 3   # nº de "late 30 sec" antes de entrar em SAFE_HOLD
+_DEGRADED_NONE_ERRORS: int = 0
+_DEGRADED_NONE_ERROR_THRESHOLD: int = 1    # primeiro NoneType subscriptable já entra em SAFE_HOLD
+# Timestamp da última vez que candles foram vistos (por ativo) após reconexão:
+# o bot aguarda pelo menos 1 candle novo antes de retomar após sair de SAFE_HOLD.
+_post_reconnect_candle_seen: Dict[str, int] = {}  # ativo → candle_id do primeiro candle pós-reconexão
+_post_reconnect_resume_ts: float = 0.0  # wall clock quando SAFE_HOLD foi desativado
+
+
+def _enter_safe_hold(reason: str) -> None:
+    """Entra em modo SAFE/HOLD: para novas decisões de trading e loga status claro."""
+    global _SAFE_HOLD_MODE, _SAFE_HOLD_TRIGGERED_AT
+    if _SAFE_HOLD_MODE:
+        return  # já em SAFE_HOLD
+    _SAFE_HOLD_MODE = True
+    _SAFE_HOLD_TRIGGERED_AT = time.time()
+    msg = f"🔴 [WATCHDOG] SAFE/HOLD ativado — {reason}"
+    print(cyellow(msg))
+    _log_error(msg)
+
+
+def _exit_safe_hold() -> None:
+    """Sai do modo SAFE/HOLD e reseta contadores de degradação."""
+    global _SAFE_HOLD_MODE, _DEGRADED_LATE_WARNINGS, _DEGRADED_NONE_ERRORS
+    global _post_reconnect_candle_seen, _post_reconnect_resume_ts
+    _SAFE_HOLD_MODE = False
+    _DEGRADED_LATE_WARNINGS = 0
+    _DEGRADED_NONE_ERRORS = 0
+    _post_reconnect_candle_seen = {}
+    _post_reconnect_resume_ts = time.time()
+    msg = "🟢 [WATCHDOG] SAFE/HOLD desativado — conexão restaurada. Aguardando candle novo por ativo."
+    print(cgreen(msg))
+    _log_error(msg)
+
+
+def report_late_warning() -> None:
+    """Registra aviso de latência ("late 30 sec") do websocket.
+
+    Chamado quando o bot detecta mensagem de aviso de atraso do servidor
+    (e.g. 'get_all_init_v2 late 30 sec' ou 'get_digital_underlying_list_data late 30 sec').
+    Ao atingir _DEGRADED_LATE_WARNING_THRESHOLD, ativa SAFE/HOLD.
+    """
+    global _DEGRADED_LATE_WARNINGS
+    _DEGRADED_LATE_WARNINGS += 1
+    if _DEGRADED_LATE_WARNINGS >= _DEGRADED_LATE_WARNING_THRESHOLD:
+        _enter_safe_hold(
+            f"late_warnings={_DEGRADED_LATE_WARNINGS} "
+            f"(thr={_DEGRADED_LATE_WARNING_THRESHOLD})"
+        )
+
+
+def report_none_subscript_error() -> None:
+    """Registra erro de NoneType subscriptable (API retornou None em vez de dict).
+
+    Chamado quando get_all_init_v2 ou get_digital_underlying_list_data retorna None.
+    Ativa SAFE/HOLD imediatamente.
+    """
+    global _DEGRADED_NONE_ERRORS
+    _DEGRADED_NONE_ERRORS += 1
+    _enter_safe_hold(
+        f"NoneType_subscriptable (none_errors={_DEGRADED_NONE_ERRORS})"
+    )
+
+
+def report_websocket_closed() -> None:
+    """Registra fechamento abrupto do websocket (WebSocketConnectionClosedException).
+
+    Força entrada imediata em SAFE/HOLD e invalida o intervalo de check de conexão
+    para que _ensure_connected() faça a verificação na próxima chamada.
+    """
+    global _last_connect_check_ts
+    _last_connect_check_ts = 0.0  # força re-check imediato
+    _enter_safe_hold("WebSocketConnectionClosedException")
 
 
 def _ensure_connected() -> bool:
@@ -1128,23 +1217,33 @@ def _ensure_connected() -> bool:
 
     Para evitar overhead em loops rápidos (M1: ~0.2s/iteração), a verificação
     de check_connect() é executada no máximo a cada _RECONNECT_CHECK_INTERVAL_S
-    segundos. Uma falha explícita da API força verificação imediata.
+    segundos, exceto quando _SAFE_HOLD_MODE está ativo (verifica imediatamente).
 
     Retorna True se conectado (ou após reconexão bem-sucedida), False se falhar.
-    Usa até _RECONNECT_MAX_ATTEMPTS tentativas com pausa de _RECONNECT_SLEEP_S entre elas.
+    Usa até _RECONNECT_MAX_ATTEMPTS tentativas com backoff exponencial.
+    Em SAFE_HOLD ativo, o caller deve aguardar o retorno True antes de retomar trading.
     """
     global API, _last_connect_check_ts
     now_t = time.time()
-    if now_t - _last_connect_check_ts < _RECONNECT_CHECK_INTERVAL_S:
+    # Em SAFE/HOLD, sempre verifica; fora de SAFE/HOLD, throttle normal
+    if not _SAFE_HOLD_MODE and (now_t - _last_connect_check_ts < _RECONNECT_CHECK_INTERVAL_S):
         return True  # still within check interval; skip check_connect() overhead
     _last_connect_check_ts = now_t
     try:
         if API is not None and API.check_connect():
+            if _SAFE_HOLD_MODE:
+                # Conexão ok mas ainda em SAFE_HOLD → pode sair agora
+                _exit_safe_hold()
             return True
     except Exception:
         pass
-    _log_error("Conexão perdida — tentando reconectar...")
+
+    if not _SAFE_HOLD_MODE:
+        _enter_safe_hold("check_connect() falhou")
+
+    _log_error("Conexão perdida — tentando reconectar (backoff exponencial)...")
     print(cyellow("⚠️  Conexão perdida. Tentando reconectar..."))
+    sleep_s = _RECONNECT_BACKOFF_BASE_S
     for attempt in range(1, _RECONNECT_MAX_ATTEMPTS + 1):
         try:
             ok, reason = API.connect()
@@ -1157,6 +1256,8 @@ def _ensure_connected() -> bool:
                         pass
                 _last_connect_check_ts = time.time()
                 print(cgreen(f"✅ Reconectado (tentativa {attempt})."))
+                _log_error(f"Reconexão bem-sucedida na tentativa {attempt}.")
+                _exit_safe_hold()
                 return True
         except TypeError as exc:
             # TypeError após _patch_websocket_on_close indica que o patch não funcionou
@@ -1168,11 +1269,40 @@ def _ensure_connected() -> bool:
             print(cyellow(f"⚠️  Reconexão tentativa {attempt}: TypeError websocket. Continuando..."))
         except Exception as exc:
             _log_error(f"Reconexão tentativa {attempt} falhou.", exc)
-        print(cyellow(f"🔄 Reconectando... ({attempt}/{_RECONNECT_MAX_ATTEMPTS})"))
-        time.sleep(_RECONNECT_SLEEP_S)
+        print(cyellow(f"🔄 Reconectando... ({attempt}/{_RECONNECT_MAX_ATTEMPTS}) aguardando {sleep_s:.0f}s"))
+        time.sleep(sleep_s)
+        sleep_s = min(sleep_s * 2, _RECONNECT_BACKOFF_MAX_S)
     _log_error("Reconexão esgotou todas as tentativas.")
     print(cred(f"❌ Não foi possível reconectar após {_RECONNECT_MAX_ATTEMPTS} tentativas."))
     return False
+
+
+def _safe_get_all_open_time() -> Optional[Dict]:
+    """Chama API.get_all_open_time() capturando erros de conexão degradada.
+
+    Detecta NoneType subscriptable (API retornou None) e WebSocketConnectionClosedException,
+    reporta ao watchdog e retorna None. O caller deve verificar o retorno e
+    aguardar reconexão antes de continuar.
+    """
+    try:
+        result = API.get_all_open_time()
+        if result is None:
+            report_none_subscript_error()
+            return None
+        return result
+    except TypeError as e:
+        if 'NoneType' in str(e):
+            report_none_subscript_error()
+        else:
+            _log_error("get_all_open_time: TypeError inesperado.", e)
+        return None
+    except Exception as e:
+        _cls = type(e).__name__
+        if 'WebSocketConnectionClosedException' in _cls or 'ConnectionClosed' in _cls:
+            report_websocket_closed()
+        else:
+            _log_error("get_all_open_time: exceção.", e)
+        return None
 
 
 def get_profile_name() -> str:
@@ -1285,9 +1415,8 @@ def _find_open_in_table(open_times: Dict[str, Any], ativo: str) -> Tuple[Optiona
 
 
 def find_preferred_variant_with_rules(base: str, allow_otc: bool) -> Tuple[Optional[str], Optional[str]]:
-    try:
-        ot = API.get_all_open_time()
-    except Exception:
+    ot = _safe_get_all_open_time()
+    if ot is None:
         return None, None
 
     base_n = _normalize_asset_name(base)
@@ -1351,11 +1480,11 @@ def ativo_aberto(ativo, chave_preferida=None) -> bool:
         val, ts = _last_open_time_cache[cache_key]
         if nowt - ts <= OPEN_TIME_CACHE_TTL_S:
             return bool(val)
+    open_times = _safe_get_all_open_time()
+    if not open_times:
+        _last_open_time_cache[cache_key] = (False, nowt)
+        return False
     try:
-        open_times = API.get_all_open_time()
-        if not open_times:
-            _last_open_time_cache[cache_key] = (False, nowt)
-            return False
         if chave_preferida:
             info = open_times.get(chave_preferida, {}).get(ativo)
             ok = isinstance(info, dict) and info.get('open', False)
@@ -3023,8 +3152,10 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
     """
     if not PREFER_DIGITAL:
         return ativo, ativo_chave
+    ot = _safe_get_all_open_time()
+    if ot is None:
+        return ativo, ativo_chave
     try:
-        ot = API.get_all_open_time()
         # Normalizar base do ativo (strip -OP / -OTC)
         base = _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', ativo.upper()))
         # use_otc global tem precedência: só permite OTC se explicitamente habilitado
@@ -3202,9 +3333,8 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
     sem sufixo) mesmo que use_otc=True, permitindo pool misto OTC + mercado aberto.
     Quando use_otc=False e allow_open_market=False, nenhum ativo passa (pool vazio).
     """
-    try:
-        ot = API.get_all_open_time()
-    except Exception:
+    ot = _safe_get_all_open_time()
+    if ot is None:
         return []
 
     _tf = tf_min if tf_min > 0 else 1
@@ -3213,11 +3343,26 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
     def _has_no_market_suffix(name_u: str) -> bool:
         return '-OTC' not in name_u and '-OP' not in name_u
 
+    def _is_open_market_index(name_u: str) -> bool:
+        """Retorna True se name_u é um símbolo de índice sem sufixo tratado como mercado aberto.
+
+        Símbolos como JXY, EXY, BXY, CXY, AXY, DXY não possuem sufixo -OP mas devem
+        ser elegíveis apenas nos perfis OPEN e MISTO (nunca no perfil OTC-only).
+        A checagem é feita pelo nome raiz (sem sufixo), pois esses ativos aparecem
+        exatamente com esses nomes na tabela de ativos da IQ Option.
+        """
+        # Extrai nome base removendo sufixos conhecidos para comparação
+        base = name_u.replace('-OTC', '').replace('-OP', '').strip()
+        return base in OPEN_MARKET_INDEX_SYMBOLS
+
     def _passes_market_filter(name_u: str) -> bool:
         if use_otc and allow_open_market:
-            # Pool misto: aceita tudo (OTC, -OP e sem sufixo)
+            # Pool misto: aceita tudo (OTC, -OP e sem sufixo incluindo índices)
             return True
         elif use_otc:
+            # OTC-only: aceita OTC e sem sufixo, MAS exclui índices de mercado aberto
+            if _is_open_market_index(name_u) and _has_no_market_suffix(name_u):
+                return False
             return '-OTC' in name_u or _has_no_market_suffix(name_u)
         elif allow_open_market:
             return ('-OP' in name_u or _has_no_market_suffix(name_u)) and '-OTC' not in name_u
@@ -3267,6 +3412,7 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         Casos tratados:
         - Ativo -OTC quando m5_allow_otc=false → "m5_allow_otc=false"
         - Ativo -OP quando m5_allow_open_market=false → "m5_allow_open_market=false"
+        - Índice de mercado aberto (JXY, EXY…) em modo OTC-only → "m5_allow_open_market=false(index)"
         - Ativo sem sufixo quando ambos disabled → "m5_allow_otc=false+m5_allow_open_market=false"
         - Pool misto (ambos=true) → None (nada filtrado)
         """
@@ -3276,6 +3422,8 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             return "m5_allow_otc=false"
         if '-OP' in name_u and not allow_open_market:
             return "m5_allow_open_market=false"
+        if _is_open_market_index(name_u) and _has_no_market_suffix(name_u) and use_otc and not allow_open_market:
+            return "m5_allow_open_market=false(index)"
         if _has_no_market_suffix(name_u) and not use_otc and not allow_open_market:
             return "m5_allow_otc=false+m5_allow_open_market=false"
         return None
@@ -3560,10 +3708,7 @@ def _startup_rank_m5_pool(
     print(f"\n📊 [STARTUP RANKING M5] Avaliando {len(candidates)} candidatos "
           f"(pool_size={pool_size})...")
 
-    try:
-        ot = API.get_all_open_time()
-    except Exception:
-        ot = {}
+    ot = _safe_get_all_open_time() or {}
 
     scored: List[Tuple[float, str, str, str]] = []  # (score, ativo, cat, breakdown)
 
@@ -4087,10 +4232,15 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
             console_event("🎯 STOP WIN atingido. Encerrando...")
             break
 
-        # Reconexão automática
+        # Reconexão automática com watchdog SAFE/HOLD
         if not _ensure_connected():
             console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
             break
+
+        # SAFE/HOLD: conexão degradada detectada; aguarda reconexão sem tomar decisões
+        if _SAFE_HOLD_MODE:
+            time.sleep(5.0)
+            continue
 
         now_server = get_now_ts()
         candle_id = now_server // period
@@ -4793,10 +4943,24 @@ def loop_patterns_multi(
             )
             break
 
-        # Reconexão automática: verifica e restaura a conexão antes de cada ciclo
+        # Reconexão automática com watchdog SAFE/HOLD: verifica e restaura a conexão antes de cada ciclo
         if not _ensure_connected():
             console_event(cred("❌ Não foi possível reconectar. Encerrando bot."))
             break
+
+        # SAFE/HOLD: conexão degradada detectada; limpa estados arm/sniper e aguarda reconexão
+        if _SAFE_HOLD_MODE:
+            # Limpa pending arm/sniper para não executar sinais stale após reconexão
+            for _a in list(per_asset_pending.keys()):
+                if per_asset_pending[_a] is not None:
+                    _log_blocked(
+                        "safe_hold_clear_pending",
+                        f"ativo={_a} tf={tf_min} pattern={per_asset_pending[_a].get('pattern_name', '')}"
+                    )
+                    per_asset_pending[_a] = None
+                    per_asset_pending_id[_a] = None
+            time.sleep(5.0)
+            continue
 
         now_server = get_now_ts()
         candle_id = now_server // period
@@ -4926,6 +5090,18 @@ def loop_patterns_multi(
             velas = get_candles_safe(ativo, period, CANDLES_LOOKBACK)
             if not velas or len(velas) < MIN_CANDLES_REQUIRED:
                 continue
+
+            # Post-reconnect guard: aguarda pelo menos 1 candle novo por ativo após sair de SAFE/HOLD
+            if _post_reconnect_resume_ts > 0:
+                _last_candle_ts = int(velas[-1].get("from", 0)) if velas else 0
+                _seen_cid = _post_reconnect_candle_seen.get(ativo, 0)
+                if _seen_cid == 0:
+                    if _last_candle_ts > _post_reconnect_resume_ts:
+                        _post_reconnect_candle_seen[ativo] = _last_candle_ts
+                    else:
+                        # Candle ainda é anterior ao reconnect — aguardar
+                        continue
+                # else: candle novo já foi visto para este ativo, pode continuar
 
             if not passes_all_regime_filters(tf_min, velas):
                 if tf_min == 5 and M5_POOL_DYNAMIC_ENABLE:

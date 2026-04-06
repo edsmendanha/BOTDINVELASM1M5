@@ -40,6 +40,12 @@ allow_otc_live = true
 #   otc=false + open_market=false → erro (pool vazio) — evite esta combinação
 #
 # Nota de segurança: OTC em conta REAL ainda requer allow_otc_live=true.
+#
+# --- Índices de mercado aberto sem sufixo ---
+# Os símbolos JXY, EXY, BXY, CXY, AXY e DXY não possuem sufixo -OP mas são
+# tratados internamente como ativos de mercado aberto. Eles são elegíveis apenas
+# nos perfis OPEN e MISTO (m5_allow_open_market=true), e excluídos no perfil
+# OTC-only (m5_allow_open_market=false). Liste-os normalmente no Ativos.txt.
 m5_allow_otc         = true
 m5_allow_open_market = true
 
