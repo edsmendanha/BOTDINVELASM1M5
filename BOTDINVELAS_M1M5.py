@@ -1142,7 +1142,7 @@ _DEGRADED_NONE_ERRORS: int = 0
 _DEGRADED_NONE_ERROR_THRESHOLD: int = 1    # primeiro NoneType subscriptable já entra em SAFE_HOLD
 # Timestamp da última vez que candles foram vistos (por ativo) após reconexão:
 # o bot aguarda pelo menos 1 candle novo antes de retomar após sair de SAFE_HOLD.
-_post_reconnect_candle_seen: Dict[str, int] = {}  # ativo → candle_id do primeiro candle pós-reconexão
+_post_reconnect_candle_seen: Dict[str, float] = {}  # ativo → candle "from" timestamp do primeiro candle pós-reconexão
 _post_reconnect_resume_ts: float = 0.0  # wall clock quando SAFE_HOLD foi desativado
 
 
@@ -1232,7 +1232,8 @@ def _ensure_connected() -> bool:
     try:
         if API is not None and API.check_connect():
             if _SAFE_HOLD_MODE:
-                # Conexão ok mas ainda em SAFE_HOLD → pode sair agora
+                # Conexão ok mas ainda em SAFE_HOLD → atualizar timestamp e sair
+                _last_connect_check_ts = time.time()
                 _exit_safe_hold()
             return True
     except Exception:
@@ -1254,6 +1255,8 @@ def _ensure_connected() -> bool:
                         API.change_balance(conta)
                     except Exception:
                         pass
+                # Update check timestamp BEFORE exiting SAFE_HOLD so that
+                # _post_reconnect_resume_ts is always >= _last_connect_check_ts.
                 _last_connect_check_ts = time.time()
                 print(cgreen(f"✅ Reconectado (tentativa {attempt})."))
                 _log_error(f"Reconexão bem-sucedida na tentativa {attempt}.")
@@ -1291,7 +1294,8 @@ def _safe_get_all_open_time() -> Optional[Dict]:
             return None
         return result
     except TypeError as e:
-        if 'NoneType' in str(e):
+        # Covers 'NoneType object is not subscriptable' and similar None-related TypeErrors
+        if 'subscriptable' in str(e) or 'NoneType' in str(e):
             report_none_subscript_error()
         else:
             _log_error("get_all_open_time: TypeError inesperado.", e)
@@ -3361,7 +3365,8 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             return True
         elif use_otc:
             # OTC-only: aceita OTC e sem sufixo, MAS exclui índices de mercado aberto
-            if _is_open_market_index(name_u) and _has_no_market_suffix(name_u):
+            # _is_open_market_index() strip suffixes internally, so no redundant suffix check needed
+            if _is_open_market_index(name_u):
                 return False
             return '-OTC' in name_u or _has_no_market_suffix(name_u)
         elif allow_open_market:
@@ -3422,7 +3427,8 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             return "m5_allow_otc=false"
         if '-OP' in name_u and not allow_open_market:
             return "m5_allow_open_market=false"
-        if _is_open_market_index(name_u) and _has_no_market_suffix(name_u) and use_otc and not allow_open_market:
+        # _is_open_market_index() strips suffixes internally, so no redundant check needed
+        if _is_open_market_index(name_u) and use_otc and not allow_open_market:
             return "m5_allow_open_market=false(index)"
         if _has_no_market_suffix(name_u) and not use_otc and not allow_open_market:
             return "m5_allow_otc=false+m5_allow_open_market=false"
@@ -5093,9 +5099,12 @@ def loop_patterns_multi(
 
             # Post-reconnect guard: aguarda pelo menos 1 candle novo por ativo após sair de SAFE/HOLD
             if _post_reconnect_resume_ts > 0:
-                _last_candle_ts = int(velas[-1].get("from", 0)) if velas else 0
-                _seen_cid = _post_reconnect_candle_seen.get(ativo, 0)
-                if _seen_cid == 0:
+                try:
+                    _last_candle_ts = float(velas[-1].get("from", 0)) if velas else 0.0
+                except (ValueError, TypeError):
+                    _last_candle_ts = 0.0
+                _seen_candle_ts = _post_reconnect_candle_seen.get(ativo, 0.0)
+                if _seen_candle_ts == 0.0:
                     if _last_candle_ts > _post_reconnect_resume_ts:
                         _post_reconnect_candle_seen[ativo] = _last_candle_ts
                     else:
