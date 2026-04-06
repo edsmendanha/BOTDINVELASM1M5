@@ -1,25 +1,23 @@
-[DEFAULTS]
-m5_allow_otc=false
-m5_allow_open_market=true
-allow_otc_live=true
+# Full Config
 
-[PROFILE_OTC]
-# previous content preserved
+[LOGIN]
+email = emailaqui
+senha = senhaaqui
 
-[PROFILE_OPEN]
-# previous content preserved
+[MARKET]
+m5_allow_otc = false
+m5_allow_open_market = true
+allow_otc_live = true
 
-[PROFILE_MISTO]
-# previous content preserved
+[PROFILE_1]
+# additional profile settings
+...  
 
-[M1]
-# previous content preserved
+[PROFILE_2]
+# additional profile settings
+...  
 
-[M5]
-# previous content preserved
+[PROFILE_3]
+# additional profile settings
+...  
 
-[RISK]
-# previous content preserved
-
-[SLEEP]
-# previous content preserved
