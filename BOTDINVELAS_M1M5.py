@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-06-watchdog-index-symbols-v14"
+BOTDIN_VERSION = "2026-04-06-single-entry-open-market-v15"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -361,10 +361,11 @@ RESPIRO_CONFIRM_POLLS_M5: int = 1
 ALLOW_OTC_LIVE: bool = True
 
 # M5 market universe flags (configuráveis em [MARKET] no config.txt)
-# m5_allow_otc=true  → pool M5 inclui ativos OTC
+# m5_allow_otc=false → pool M5 exclui ativos OTC (padrão: foco em mercado aberto)
 # m5_allow_open_market=true → pool M5 inclui ativos de mercado aberto (-OP)
-# Quando ambos true (padrão), o pool M5 aceita OTC e mercado aberto simultaneamente.
-M5_ALLOW_OTC: bool = True
+# Padrão: apenas mercado aberto. Para OTC ou misto, use o menu interativo
+# ou ajuste m5_allow_otc=true no config.txt.
+M5_ALLOW_OTC: bool = False
 M5_ALLOW_OPEN_MARKET: bool = True
 
 # V15 per-timeframe (defaults = valores globais; sobrescritos em _load_from_config)
@@ -4322,6 +4323,8 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
                     continue
 
                 saldo_before = get_available_balance() or 0.0
+                # Entrada única e certeira: amount fixo por sinal, sem progressão de stake.
+                # Cada sinal gera no máximo UMA ordem. Não há Martingale, Soros ou Recovery.
                 amount_to_use = compute_amount(saldo_before)
                 secs_left = seconds_left_in_period(tf_min)
 
@@ -5355,6 +5358,8 @@ def loop_patterns_multi(
 
             if not _sniper_abort:
                 saldo_before = get_available_balance() or 0.0
+                # Entrada única e certeira: amount fixo por sinal, sem progressão de stake.
+                # Cada sinal gera no máximo UMA ordem. Não há Martingale, Soros ou Recovery.
                 amount_to_use = compute_amount(saldo_before)
                 secs_left = seconds_left_in_period(tf_min)
 
