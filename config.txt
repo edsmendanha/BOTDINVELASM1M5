@@ -3,16 +3,24 @@
 #  Edite este arquivo para ajustar todos os parâmetros de estratégia sem
 #  modificar o código-fonte. Defaults foram escolhidos para manter o
 #  comportamento original do bot quando as novas seções não existem.
+#
+#  ESTRATÉGIA: entrada única e certeira (single-shot).
+#  Não há Martingale, Soros, Recovery ou qualquer forma de stake progressivo.
+#  Cada sinal gera no máximo UMA ordem. Para aumentar exposição, ajuste
+#  amount_fixed ou max_entries — nunca use progressão de valor após perda.
 # =============================================================================
 
 [LOGIN]
-# ATENÇÃO: Não comite credenciais reais. Preencha localmente.
+# ATENÇÃO: Não comite credenciais reais. Preencha localmente antes de rodar.
 email = seu@email.com
 senha = suasenha
 
 [AJUSTES]
 # Tipo padrão de operação: digital ou binarias
 tipo = digital
+# Tipo de conta padrão: demo (PRACTICE) ou real (REAL).
+# O menu interativo permite sobrescrever a cada execução.
+# account_type = demo
 # Buffer de tempo (s) antes do fim da vela para aceitar compra
 purchase_buffer_seconds = 1
 
@@ -28,15 +36,15 @@ allow_otc_live = true
 # Ambas as flags são independentes e podem ser combinadas livremente.
 #
 # m5_allow_otc = true   → inclui ativos OTC  (ex: AUDCAD-OTC, EURUSD-OTC)
-# m5_allow_otc = false  → exclui ativos OTC
+# m5_allow_otc = false  → exclui ativos OTC  ← PADRÃO (mercado aberto foco)
 #
 # m5_allow_open_market = true  → inclui ativos de mercado aberto (ex: EURUSD-OP)
 # m5_allow_open_market = false → exclui ativos de mercado aberto
 #
 # Combinações:
-#   otc=true  + open_market=true  → pool misto OTC + mercado aberto (padrão)
+#   otc=false + open_market=true  → apenas mercado aberto ← PADRÃO RECOMENDADO
+#   otc=true  + open_market=true  → pool misto OTC + mercado aberto
 #   otc=true  + open_market=false → apenas OTC
-#   otc=false + open_market=true  → apenas mercado aberto
 #   otc=false + open_market=false → erro (pool vazio) — evite esta combinação
 #
 # Nota de segurança: OTC em conta REAL ainda requer allow_otc_live=true.
@@ -46,7 +54,9 @@ allow_otc_live = true
 # tratados internamente como ativos de mercado aberto. Eles são elegíveis apenas
 # nos perfis OPEN e MISTO (m5_allow_open_market=true), e excluídos no perfil
 # OTC-only (m5_allow_open_market=false). Liste-os normalmente no Ativos.txt.
-m5_allow_otc         = true
+#
+# PADRÃO: OTC desativado — foco em horário de mercado aberto (M5 non-OTC).
+m5_allow_otc         = false
 m5_allow_open_market = true
 
 # =============================================================================
@@ -65,7 +75,9 @@ pending_freeze_poll_sleep_m5 = 0.20
 # =============================================================================
 # Modo de valor por operação: fixed (fixo) ou percent (percentual do saldo)
 amount_mode         = fixed
-amount_fixed        = 1.0
+# Valor fixo por operação (entrada única e certeira — sem progressão de stake).
+# Ajuste conforme sua gestão de banca. Sugestão inicial: 1–5% da banca.
+amount_fixed        = 5.0
 amount_percent      = 1.0
 # true = recalcular percentual a cada operação; false = fixar no início
 amount_recalc_each  = true
@@ -73,8 +85,9 @@ amount_min          = 0.01
 # Stop Loss/Win em % do saldo inicial (0 = desativado)
 stop_loss_pct       = 0.0
 stop_win_pct        = 0.0
-# Número máximo de entradas aceitas (0 = ilimitado)
-max_entries         = 0
+# Número máximo de entradas aceitas por sessão (0 = ilimitado)
+# Recomendação: 7 entradas para sessão de mercado aberto M5
+max_entries         = 7
 
 # =============================================================================
 [M1]
@@ -175,8 +188,11 @@ sniper_antifakeout_extreme   = false
 [M5]
 # =============================================================================
 # Parâmetros exclusivos para o timeframe M5 (5 minutos).
+# Foco: mercado aberto (non-OTC). Entrada única e certeira (single-shot).
 
 # --- Modo de entrada ---
+# reversal    : Motor V15 (reversão por score RSI+BB+Wick+Impulso) ← PRIORIDADE
+# continuation: Estratégia Respiro (impulso → pullback → continuação)
 entry_mode = reversal
 
 # --- Filtros de Regime ---
@@ -185,24 +201,25 @@ atr_period          = 14
 atr_adaptive_window = 30
 atr_adaptive_factor = 0.45
 atr_max_thr         = 0.00100
-# OTC TEST: reduzido de 0.000020 para ser menos bloqueante em OTC (ratio ~0.0008 nos logs)
-atr_min_ratio       = 0.000010
+# Mercado aberto M5: limiar ATR mais suave para não bloquear demais
+atr_min_ratio       = 0.000015
 
 enable_trend_filter = true
 adx_period          = 14
-# OTC TEST: reduzido de 14 → 10 (logs mostravam ADX ~10–12 constante, bloqueando tudo)
-adx_min             = 10.0
+# Mercado aberto M5: ADX mínimo mais permissivo (mercado aberto já filtra por liquidez)
+adx_min             = 12.0
 bb_period           = 20
 bb_std              = 2.0
-# OTC TEST: reduzido de 0.00070 → 0.00045 (OTC tem compressão maior que mercado aberto)
-bb_width_min        = 0.00045
+# Mercado aberto M5: BBW mínimo ligeiramente reduzido (mais entradas sem comprometer sinal)
+bb_width_min        = 0.00050
 slope_lookback      = 8
-# OTC TEST: reduzido de 0.000040 → 0.000015 (mercado OTC muito lateral)
-slope_min           = 0.000015
+# Mercado aberto M5: slope_min mais suave (horário normal tem momentos de range)
+slope_min           = 0.000020
 
-entry_window_seconds = 25
+# Janela de entrada: mais larga para capturar confirmação sem pending_timeout excessivo
+entry_window_seconds = 22
 
-# Máximo de ativos simultâneos para M5 (padrão recomendado para teste sniper: 2)
+# Máximo de ativos simultâneos para M5 (padrão recomendado: 2)
 max_assets = 2
 
 # --- Motor de Reversão V15 ---
@@ -269,11 +286,14 @@ respiro_confirm_polls        = 1
 # sniper_antifakeout_extreme=true bloqueia também violação do extremo anterior.
 # v12: timing candle-based — secs_from_open usa velas[-1]["from"] (feed real)
 # em vez de now_server - ECF, evitando expiry prematura por drift/atraso de feed.
+#
+# ENTRADA ÚNICA E CERTEIRA: cada sinal gera no máximo UMA ordem.
+# Não há retry, Martingale, Soros ou progressão de stake após perda.
 sniper_mode                  = true
 arm_score_min                = 60
 fallback_arm_score_min       = 50
-# OTC TEST: janela de 25s — robusta com timing candle-based do v12
-sniper_window_seconds        = 25
+# Mercado aberto M5: janela sniper reduzida de 25s→20s (timing mais preciso em open market)
+sniper_window_seconds        = 20
 sniper_antifakeout_extreme   = false
 
 # =============================================================================
@@ -284,15 +304,16 @@ sniper_antifakeout_extreme   = false
 # for better candidates from the Ativos.txt universe.
 #
 # Safe default: false (preserves original behavior; set to true to activate).
-# OTC TEST: ativado para rotação automática de ativos M5.
+# Recomendado: true para sessões de mercado aberto com pool dinâmico.
 pool_dynamic_enable          = true
 
 # How often (minutes) to trigger a rebalance check
-pool_rebalance_minutes       = 10
+# Aumentado para reduzir troca excessiva (thrashing) entre ativos
+pool_rebalance_minutes       = 12
 
 # Pool is considered "dead" if no detected/confirmed event occurred in this
 # many minutes across all pool assets — triggers a more aggressive swap.
-pool_dead_minutes            = 6
+pool_dead_minutes            = 8
 
 # Max assets to swap per rebalance under normal conditions
 pool_swap_max_normal         = 1
@@ -329,9 +350,11 @@ pool_score_w_expired_rejected = 1.0
 # Each missed_early_entry subtracts this many points
 pool_score_w_missed          = 1.5
 # Each blocked event (regime filter) subtracts this many points
-pool_score_w_blocked         = 0.5
+# Reduzido para não punir excessivamente ativos em consolidação temporária
+pool_score_w_blocked         = 0.3
 # Each pending_timeout event subtracts this many points
-pool_score_w_pending_timeout = 2.0
+# Reduzido para não expulsar ativo bom por timeout isolado
+pool_score_w_pending_timeout = 1.2
 # Each latency_guard event subtracts this many points
 pool_score_w_latency_guard   = 1.0
 # Each asset_closed event subtracts this many points
@@ -376,7 +399,7 @@ dead_market_penalty          = 5.0
 m5_allow_otc         = true
 m5_allow_open_market = false
 
-# Filtros de regime M5 (calibrados para OTC)
+# Filtros de regime M5 (calibrados para OTC — mais permissivos por compressão)
 adx_min              = 10.0
 atr_min_ratio        = 0.000010
 bb_width_min         = 0.00045
@@ -387,21 +410,26 @@ entry_window_seconds = 25
 # [PROFILE_OPEN] — Perfil de mercado: apenas Mercado Aberto (ativos -OP)
 # =============================================================================
 # Aplicado automaticamente quando o menu M5 seleciona "Mercado Aberto" (perfil 2).
-# Thresholds calibrados para o comportamento do mercado regular: maior
-# volatilidade, ADX/ATR mais altos e movimentos mais direcionais.
+# Thresholds calibrados para mercado regular: maior volatilidade e movimento
+# direcional. Mais permissivo que versão anterior para reduzir pending_timeout.
 #
-# Para alterar os valores padrão do perfil, edite esta seção.
+# Meta: operar em horário normal com mais entradas sem perder qualidade.
 [PROFILE_OPEN]
 # Flags de universo
 m5_allow_otc         = false
 m5_allow_open_market = true
 
-# Filtros de regime M5 (calibrados para mercado aberto)
-adx_min              = 14.0
-atr_min_ratio        = 0.000020
-bb_width_min         = 0.00060
-slope_min            = 0.000030
-entry_window_seconds = 20
+# Filtros de regime M5 (calibrados para mercado aberto — mais soltos)
+# ADX reduzido de 14→12: captura mais sinais sem perder direcionamento
+adx_min              = 12.0
+# ATR reduzido de 0.000020→0.000015: menos bloqueio por volatilidade baixa
+atr_min_ratio        = 0.000015
+# BBW reduzido de 0.00060→0.00050: mais entradas em lateralização moderada
+bb_width_min         = 0.00050
+# slope_min reduzido de 0.000030→0.000020: menos ema_flat_slope bloqueios
+slope_min            = 0.000020
+# entry_window ampliada de 20→22s: reduz pending_timeout ecf_window_closed
+entry_window_seconds = 22
 
 # =============================================================================
 # [PROFILE_MISTO] — Perfil de mercado: OTC + Mercado Aberto (misto)
