@@ -1,5 +1,25 @@
-emailaqui/senhaaqui placeholders
-allow_otc_live=true
+[DEFAULTS]
 m5_allow_otc=false
 m5_allow_open_market=true
-profiles included
+allow_otc_live=true
+
+[PROFILE_OTC]
+# previous content preserved
+
+[PROFILE_OPEN]
+# previous content preserved
+
+[PROFILE_MISTO]
+# previous content preserved
+
+[M1]
+# previous content preserved
+
+[M5]
+# previous content preserved
+
+[RISK]
+# previous content preserved
+
+[SLEEP]
+# previous content preserved
