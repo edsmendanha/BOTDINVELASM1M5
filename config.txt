@@ -1,19 +1,31 @@
 # =============================================================================
 #  BOT DINVELAS M1/M5 — Arquivo de Configuração
 #  Edite este arquivo para ajustar todos os parâmetros de estratégia sem
-#  modificar o código-fonte. Defaults foram escolhidos para manter o
-#  comportamento original do bot quando as novas seções não existem.
+#  modificar o código-fonte.
 #
 #  ESTRATÉGIA: entrada única e certeira (single-shot).
 #  Não há Martingale, Soros, Recovery ou qualquer forma de stake progressivo.
-#  Cada sinal gera no máximo UMA ordem. Para aumentar exposição, ajuste
-#  amount_fixed ou max_entries — nunca use progressão de valor após perda.
+#  Cada sinal gera no máximo UMA ordem.
+#
+#  IMPORTANTE (seu pedido):
+#  - HOJE você quer testar OTC.
+#  - Mercado aberto (-OP) só AMANHÃ.
+#  - Você quer a OPÇÃO LIVRE no MENU para escolher OTC / OPEN / MISTO
+#    e também escolher DEMO/REAL.
+#
+#  Então: os defaults do config NÃO devem “forçar” um mercado específico.
+#  O menu interativo deve ser a fonte de verdade na hora de rodar.
+#
+#  Defaults abaixo ficam “neutros” e seguros:
+#    * m5_allow_otc=false
+#    * m5_allow_open_market=true
+#  (isso evita pool vazio e não te prende; o menu pode sobrescrever.)
 # =============================================================================
 
 [LOGIN]
 # ATENÇÃO: Não comite credenciais reais. Preencha localmente antes de rodar.
-email = seu@email.com
-senha = suasenha
+email = emailaqui
+senha = senhaaqui
 
 [AJUSTES]
 # Tipo padrão de operação: digital ou binarias
@@ -27,35 +39,13 @@ purchase_buffer_seconds = 1
 # =============================================================================
 [MARKET]
 # =============================================================================
-# OTC em conta real: true = permite (padrão), false = bloqueia.
-# Mantenha false se quiser proteção extra contra operar OTC em conta real.
+# OTC em conta real: true = permite, false = bloqueia.
+# Você quer poder escolher no menu; então deixamos true para não te travar.
 allow_otc_live = true
 
 # --- Universo de ativos para M5 ---
-# Controla quais mercados o bot considera ao montar o pool de ativos M5.
-# Ambas as flags são independentes e podem ser combinadas livremente.
-#
-# m5_allow_otc = true   → inclui ativos OTC  (ex: AUDCAD-OTC, EURUSD-OTC)
-# m5_allow_otc = false  → exclui ativos OTC  ← PADRÃO (mercado aberto foco)
-#
-# m5_allow_open_market = true  → inclui ativos de mercado aberto (ex: EURUSD-OP)
-# m5_allow_open_market = false → exclui ativos de mercado aberto
-#
-# Combinações:
-#   otc=false + open_market=true  → apenas mercado aberto ← PADRÃO RECOMENDADO
-#   otc=true  + open_market=true  → pool misto OTC + mercado aberto
-#   otc=true  + open_market=false → apenas OTC
-#   otc=false + open_market=false → erro (pool vazio) — evite esta combinação
-#
-# Nota de segurança: OTC em conta REAL ainda requer allow_otc_live=true.
-#
-# --- Índices de mercado aberto sem sufixo ---
-# Os símbolos JXY, EXY, BXY, CXY, AXY e DXY não possuem sufixo -OP mas são
-# tratados internamente como ativos de mercado aberto. Eles são elegíveis apenas
-# nos perfis OPEN e MISTO (m5_allow_open_market=true), e excluídos no perfil
-# OTC-only (m5_allow_open_market=false). Liste-os normalmente no Ativos.txt.
-#
-# PADRÃO: OTC desativado — foco em horário de mercado aberto (M5 non-OTC).
+# Defaults "neutros": OPEN-market habilitado, OTC desabilitado.
+# No MENU você escolhe: 1=OTC  2=OPEN  3=MISTO.
 m5_allow_otc         = false
 m5_allow_open_market = true
 
@@ -63,44 +53,28 @@ m5_allow_open_market = true
 [SLEEP]
 # =============================================================================
 idle_sleep_m1    = 0.20
-# Reduzido para polling mais responsivo no M5 (não perder início de vela)
 idle_sleep_m5    = 0.60
 pending_sleep_m1 = 0.25
 pending_sleep_m5 = 0.45
-# Fast poll interval used during M5 freeze window (pending-first mode)
 pending_freeze_poll_sleep_m5 = 0.20
 
 # =============================================================================
 [RISK]
 # =============================================================================
-# Modo de valor por operação: fixed (fixo) ou percent (percentual do saldo)
 amount_mode         = fixed
-# Valor fixo por operação (entrada única e certeira — sem progressão de stake).
-# Ajuste conforme sua gestão de banca. Sugestão inicial: 1–5% da banca.
 amount_fixed        = 5.0
 amount_percent      = 1.0
-# true = recalcular percentual a cada operação; false = fixar no início
 amount_recalc_each  = true
 amount_min          = 0.01
-# Stop Loss/Win em % do saldo inicial (0 = desativado)
 stop_loss_pct       = 0.0
 stop_win_pct        = 0.0
-# Número máximo de entradas aceitas por sessão (0 = ilimitado)
-# Recomendação: 7 entradas para sessão de mercado aberto M5
 max_entries         = 7
 
 # =============================================================================
 [M1]
 # =============================================================================
-# Parâmetros exclusivos para o timeframe M1 (1 minuto).
-# Cada parâmetro aqui sobrescreve o default hardcoded do código.
-
-# --- Modo de entrada ---
-# reversal    : Motor V15 (reversão por score RSI+BB+Wick+Impulso)
-# continuation: Estratégia Respiro (impulso → pullback → continuação)
 entry_mode = reversal
 
-# --- Filtros de Regime ---
 enable_atr_filter   = true
 atr_period          = 14
 atr_adaptive_window = 30
@@ -117,13 +91,9 @@ bb_width_min        = 0.00003
 slope_lookback      = 8
 slope_min           = 0.000003
 
-# Janela de entrada (segundos a partir do início da vela)
 entry_window_seconds = 30
-
-# Máximo de ativos simultâneos para M1 (padrão: 2)
 max_assets = 2
 
-# --- Motor de Reversão V15 ---
 v15_score_min           = 55
 v15_score_gap_min       = 1
 v15_confirm_polls       = 1
@@ -144,133 +114,17 @@ v15_wick_score_max      = 25
 v15_wick_score_factor   = 35
 v15_fallback_near_score = 38
 
-# Filtro estrutural M1 (janela de micro-range)
 m1_structural_candles = 5
 
-# --- Canal Keltner (EMA(hlc3) ± RMA(TR)*shift) ---
-# Componente adicional de score: pontua quando preço toca extremo do canal.
 keltner_enable = true
 keltner_period = 20
 keltner_shift  = 1.5
 
-# --- Pivôs / Fractais (5 barras, left=2, right=2) ---
-# Define topos/fundos estruturais de mercado para filtros e reforço de sinal.
-pivot_enable          = true
-pivot_left            = 2
-pivot_right           = 2
-# Proximidade máxima do pivô para considerar "na zona" (fração do preço)
-pivot_proximity_pct   = 0.002
-
-# --- Estratégia Respiro (continuação) ---
-# Só usada quando entry_mode = continuation
-respiro_enable               = false
-respiro_impulse_lookback     = 5
-respiro_min_impulse          = 0.0010
-respiro_pullback_max_frac    = 0.618
-respiro_max_pullback_candles = 3
-# Gatilho: close_over_high (CALL) / close_under_low (PUT)
-respiro_trigger              = close_over_high
-respiro_confirm_polls        = 1
-
-# --- Estratégia ARM + SNIPER 0–5s ---
-# Quando sniper_mode=true, o bot arma o sinal na vela fechada (arm_score_min mais alto)
-# e executa SOMENTE nos primeiros sniper_window_seconds após abertura da vela alvo.
-# Filtro anti-fakeout primário: CALL preço>=open | PUT preço<=open da vela atual.
-# sniper_antifakeout_extreme=true também bloqueia violação do extremo da vela anterior.
-# Defaults: false (modo desativado — mantém comportamento V15 confirm-pending original).
-sniper_mode                  = false
-arm_score_min                = 60
-fallback_arm_score_min       = 55
-sniper_window_seconds        = 5
-sniper_antifakeout_extreme   = false
-
-# =============================================================================
-[M5]
-# =============================================================================
-# Parâmetros exclusivos para o timeframe M5 (5 minutos).
-# Foco: mercado aberto (non-OTC). Entrada única e certeira (single-shot).
-
-# --- Modo de entrada ---
-# reversal    : Motor V15 (reversão por score RSI+BB+Wick+Impulso) ← PRIORIDADE
-# continuation: Estratégia Respiro (impulso → pullback → continuação)
-entry_mode = reversal
-
-# --- Filtros de Regime ---
-enable_atr_filter   = true
-atr_period          = 14
-atr_adaptive_window = 30
-atr_adaptive_factor = 0.45
-atr_max_thr         = 0.00100
-# Mercado aberto M5: limiar ATR mais suave para não bloquear demais
-atr_min_ratio       = 0.000015
-
-enable_trend_filter = true
-adx_period          = 14
-# Mercado aberto M5: ADX mínimo mais permissivo (mercado aberto já filtra por liquidez)
-adx_min             = 12.0
-bb_period           = 20
-bb_std              = 2.0
-# Mercado aberto M5: BBW mínimo ligeiramente reduzido (mais entradas sem comprometer sinal)
-bb_width_min        = 0.00050
-slope_lookback      = 8
-# Mercado aberto M5: slope_min mais suave (horário normal tem momentos de range)
-slope_min           = 0.000020
-
-# Janela de entrada: mais larga para capturar confirmação sem pending_timeout excessivo
-entry_window_seconds = 22
-
-# Máximo de ativos simultâneos para M5 (padrão recomendado: 2)
-max_assets = 2
-
-# --- Motor de Reversão V15 ---
-v15_score_min           = 55
-v15_score_gap_min       = 1
-v15_confirm_polls       = 1
-v15_rsi_period          = 14
-v15_rsi_oversold        = 30
-v15_rsi_overbought      = 70
-v15_bb_period           = 20
-v15_bb_std              = 2.0
-v15_bb_proximity        = 0.25
-v15_impulse_lookback    = 5
-v15_context_lookback    = 12
-v15_wick_ratio          = 0.45
-v15_candles_needed      = 40
-v15_trend_threshold     = 0.0008
-v15_impulse_threshold   = 0.0006
-v15_impulse_multiplier  = 8000
-v15_wick_score_max      = 25
-v15_wick_score_factor   = 35
-v15_fallback_near_score = 38
-
-# Filtro estrutural M5
-m5_extreme_candles = 20
-m5_extreme_frac    = 0.20
-
-# Freeze window: when pending signal detected, focus only on that asset for N seconds
-# 0 = desativar freeze (recomendável para sniper multi-ativo: evita freeze_skip
-# que usava now_server stale; o mecanismo candle-based do v12 já é suficiente)
-pending_freeze_seconds_m5 = 0
-
-# Max age (seconds) for a pending M5 signal — fallback guard only.
-# AVISO: a partir da v12, o bot usa timing candle-based (velas[-1]["from"]) para
-# determinar se a janela sniper ainda está aberta. Este parâmetro só se aplica
-# a sinais SEM expected_confirm_from válido (edge case de dados corrompidos).
-# 0 = desativar o fallback por idade de detecção (recomendado com v12+)
-pending_max_age_seconds_m5 = 0
-
-# --- Canal Keltner ---
-keltner_enable = true
-keltner_period = 20
-keltner_shift  = 1.5
-
-# --- Pivôs / Fractais ---
 pivot_enable        = true
 pivot_left          = 2
 pivot_right         = 2
 pivot_proximity_pct = 0.002
 
-# --- Estratégia Respiro ---
 respiro_enable               = false
 respiro_impulse_lookback     = 5
 respiro_min_impulse          = 0.0010
@@ -279,172 +133,135 @@ respiro_max_pullback_candles = 3
 respiro_trigger              = close_over_high
 respiro_confirm_polls        = 1
 
-# --- Estratégia ARM + SNIPER 0–25s (M5) ---
-# Quando sniper_mode=true, o bot arma o sinal na vela fechada com score elevado
-# (arm_score_min) e executa SOMENTE nos primeiros sniper_window_seconds após a
-# abertura da vela alvo. Anti-fakeout: CALL preço>=open | PUT preço<=open.
-# sniper_antifakeout_extreme=true bloqueia também violação do extremo anterior.
-# v12: timing candle-based — secs_from_open usa velas[-1]["from"] (feed real)
-# em vez de now_server - ECF, evitando expiry prematura por drift/atraso de feed.
-#
-# ENTRADA ÚNICA E CERTEIRA: cada sinal gera no máximo UMA ordem.
-# Não há retry, Martingale, Soros ou progressão de stake após perda.
-sniper_mode                  = true
-arm_score_min                = 60
-fallback_arm_score_min       = 50
-# Mercado aberto M5: janela sniper reduzida de 25s→20s (timing mais preciso em open market)
-sniper_window_seconds        = 20
-sniper_antifakeout_extreme   = false
+sniper_mode                = false
+arm_score_min              = 60
+fallback_arm_score_min     = 55
+sniper_window_seconds      = 5
+sniper_antifakeout_extreme = false
 
 # =============================================================================
-# [M5] Dynamic Asset Pool Manager
+[M5]
 # =============================================================================
-# Enables automatic pool rotation for M5: every pool_rebalance_minutes the bot
-# scores all active assets by operational quality and swaps out the worst ones
-# for better candidates from the Ativos.txt universe.
-#
-# Safe default: false (preserves original behavior; set to true to activate).
-# Recomendado: true para sessões de mercado aberto com pool dinâmico.
-pool_dynamic_enable          = true
+entry_mode = reversal
 
-# How often (minutes) to trigger a rebalance check
-# Aumentado para reduzir troca excessiva (thrashing) entre ativos
-pool_rebalance_minutes       = 12
+enable_atr_filter   = true
+atr_period          = 14
+atr_adaptive_window = 30
+atr_adaptive_factor = 0.45
+atr_max_thr         = 0.00100
+atr_min_ratio       = 0.000015
 
-# Pool is considered "dead" if no detected/confirmed event occurred in this
-# many minutes across all pool assets — triggers a more aggressive swap.
-pool_dead_minutes            = 8
+enable_trend_filter = true
+adx_period          = 14
+adx_min             = 12.0
+bb_period           = 20
+bb_std              = 2.0
+bb_width_min        = 0.00050
+slope_lookback      = 8
+slope_min           = 0.000020
 
-# Max assets to swap per rebalance under normal conditions
-pool_swap_max_normal         = 1
+entry_window_seconds = 22
+max_assets = 2
 
-# Max assets to swap per rebalance when pool is "dead"
-pool_swap_max_dead           = 2
+v15_score_min           = 55
+v15_score_gap_min       = 1
+v15_confirm_polls       = 1
+v15_rsi_period          = 14
+v15_rsi_oversold        = 30
+v15_rsi_overbought      = 70
+v15_bb_period           = 20
+v15_bb_std              = 2.0
+v15_bb_proximity        = 0.25
+v15_impulse_lookback    = 5
+v15_context_lookback    = 12
+v15_wick_ratio          = 0.45
+v15_candles_needed      = 40
+v15_trend_threshold     = 0.0008
+v15_impulse_threshold   = 0.0006
+v15_impulse_multiplier  = 8000
+v15_wick_score_max      = 25
+v15_wick_score_factor   = 35
+v15_fallback_near_score = 38
 
-# Cooldown (minutes) before a removed asset can re-enter the pool
-pool_asset_cooldown_minutes  = 20
+m5_extreme_candles = 20
+m5_extreme_frac    = 0.20
+pending_freeze_seconds_m5 = 0
+pending_max_age_seconds_m5 = 0
 
-# --- Universe-size-aware swap scaling ---
-# When true, n_swap increases proportionally to the number of eligible external
-# candidates. This enables broader rotation when many assets are open (~20).
-# Formula: n_swap += len(eligible_candidates) // pool_swap_universe_divisor
+keltner_enable = true
+keltner_period = 20
+keltner_shift  = 1.5
+
+pivot_enable        = true
+pivot_left          = 2
+pivot_right         = 2
+pivot_proximity_pct = 0.002
+
+respiro_enable               = false
+respiro_impulse_lookback     = 5
+respiro_min_impulse          = 0.0010
+respiro_pullback_max_frac    = 0.618
+respiro_max_pullback_candles = 3
+respiro_trigger              = close_over_high
+respiro_confirm_polls        = 1
+
+sniper_mode                = true
+arm_score_min              = 60
+fallback_arm_score_min     = 50
+sniper_window_seconds      = 20
+sniper_antifakeout_extreme = false
+
+pool_dynamic_enable           = true
+pool_rebalance_minutes        = 12
+pool_dead_minutes             = 8
+pool_swap_max_normal          = 1
+pool_swap_max_dead            = 2
+pool_asset_cooldown_minutes   = 20
 pool_swap_scale_with_universe = true
 pool_swap_universe_divisor    = 8
-# Absolute cap on swaps per rebalance cycle (regardless of scaling)
 pool_swap_max_abs             = 3
-
-# --- Scoring window ---
-# Rolling window in minutes for computing the per-asset score.
-# Only events within this window are counted. Set to 0 to use cumulative counts.
-pool_score_window_minutes    = 60
-
-# --- Scoring weights (higher asset score = better; adjust to taste) ---
-# Each confirmed signal adds this many points
-pool_score_w_confirmed       = 3.0
-# Each win trade adds this many points
-pool_score_w_win_trade       = 5.0
-# Bonus for having at least one detected event (avoids penalizing quiet assets)
-pool_score_w_detected        = 0.5
-# Each expired or rejected signal subtracts this many points
+pool_score_window_minutes     = 60
+pool_score_w_confirmed        = 3.0
+pool_score_w_win_trade        = 5.0
+pool_score_w_detected         = 0.5
 pool_score_w_expired_rejected = 1.0
-# Each missed_early_entry subtracts this many points
-pool_score_w_missed          = 1.5
-# Each blocked event (regime filter) subtracts this many points
-# Reduzido para não punir excessivamente ativos em consolidação temporária
-pool_score_w_blocked         = 0.3
-# Each pending_timeout event subtracts this many points
-# Reduzido para não expulsar ativo bom por timeout isolado
-pool_score_w_pending_timeout = 1.2
-# Each latency_guard event subtracts this many points
-pool_score_w_latency_guard   = 1.0
-# Each asset_closed event subtracts this many points
-# (also triggers immediate removal from pool with cooldown)
-pool_score_w_asset_closed    = 3.0
-# Each loss trade subtracts this many points
-pool_score_w_loss_trade      = 1.0
+pool_score_w_missed           = 1.5
+pool_score_w_blocked          = 0.3
+pool_score_w_pending_timeout  = 1.2
+pool_score_w_latency_guard    = 1.0
+pool_score_w_asset_closed     = 3.0
+pool_score_w_loss_trade       = 1.0
 
-# --- Dead-market detection via Donchian range ---
-# Donchian range ratio = (highest_high - lowest_low) / mid_price over N candles.
-# Assets below dead_market_range_ratio_thr receive a score penalty at rebalance.
-# Set dead_market_donchian_period = 0 to disable Donchian-based scoring.
-dead_market_donchian_period  = 10
-dead_market_range_ratio_thr  = 0.002
-dead_market_penalty          = 5.0
+dead_market_donchian_period   = 10
+dead_market_range_ratio_thr   = 0.002
+dead_market_penalty           = 5.0
 
 # =============================================================================
-# [M15]  — Placeholder para implementação futura (não ativo ainda)
+# Perfis de mercado (aplicados via MENU)
 # =============================================================================
-# entry_mode             = reversal
-# enable_atr_filter      = true
-# atr_min_ratio          = 0.000040
-# adx_min                = 22.0
-# bb_width_min           = 0.00120
-# slope_min              = 0.00020
-# entry_window_seconds   = 30
-# v15_score_min          = 60
-# keltner_enable         = true
-# pivot_enable           = true
-# respiro_enable         = false
-
-# =============================================================================
-# [PROFILE_OTC] — Perfil de mercado: apenas OTC (24/7, baixa volatilidade)
-# =============================================================================
-# Aplicado automaticamente quando o menu M5 seleciona "OTC" (perfil 1).
-# Thresholds calibrados para o comportamento OTC: mercado mais lateral,
-# comprimido e com ADX/ATR tipicamente mais baixos que mercado aberto.
-#
-# Para alterar os valores padrão do perfil, edite esta seção.
 [PROFILE_OTC]
-# Flags de universo
 m5_allow_otc         = true
 m5_allow_open_market = false
-
-# Filtros de regime M5 (calibrados para OTC — mais permissivos por compressão)
 adx_min              = 10.0
 atr_min_ratio        = 0.000010
 bb_width_min         = 0.00045
 slope_min            = 0.000015
 entry_window_seconds = 25
 
-# =============================================================================
-# [PROFILE_OPEN] — Perfil de mercado: apenas Mercado Aberto (ativos -OP)
-# =============================================================================
-# Aplicado automaticamente quando o menu M5 seleciona "Mercado Aberto" (perfil 2).
-# Thresholds calibrados para mercado regular: maior volatilidade e movimento
-# direcional. Mais permissivo que versão anterior para reduzir pending_timeout.
-#
-# Meta: operar em horário normal com mais entradas sem perder qualidade.
 [PROFILE_OPEN]
-# Flags de universo
 m5_allow_otc         = false
 m5_allow_open_market = true
-
-# Filtros de regime M5 (calibrados para mercado aberto — mais soltos)
-# ADX reduzido de 14→12: captura mais sinais sem perder direcionamento
 adx_min              = 12.0
-# ATR reduzido de 0.000020→0.000015: menos bloqueio por volatilidade baixa
 atr_min_ratio        = 0.000015
-# BBW reduzido de 0.00060→0.00050: mais entradas em lateralização moderada
 bb_width_min         = 0.00050
-# slope_min reduzido de 0.000030→0.000020: menos ema_flat_slope bloqueios
 slope_min            = 0.000020
-# entry_window ampliada de 20→22s: reduz pending_timeout ecf_window_closed
 entry_window_seconds = 22
 
-# =============================================================================
-# [PROFILE_MISTO] — Perfil de mercado: OTC + Mercado Aberto (misto)
-# =============================================================================
-# Aplicado automaticamente quando o menu M5 seleciona "Misto" (perfil 3).
-# Usa thresholds intermediários que funcionam razoavelmente em ambos os
-# tipos de ativo. Equivale ao comportamento legado (pré-perfis).
 [PROFILE_MISTO]
-# Flags de universo
 m5_allow_otc         = true
 m5_allow_open_market = true
-
-# Filtros de regime M5 (intermediários OTC+Open)
-adx_min              = 10.0
-atr_min_ratio        = 0.000010
-bb_width_min         = 0.00045
-slope_min            = 0.000015
-entry_window_seconds = 25
+adx_min              = 11.0
+atr_min_ratio        = 0.000012
+bb_width_min         = 0.00048
+slope_min            = 0.000018
+entry_window_seconds = 24
