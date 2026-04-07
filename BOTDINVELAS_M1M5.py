@@ -714,6 +714,12 @@ EARLY_LOSS_EPS = 0.02
 # Número de ciclos de IDLE_SLEEP_S_M5 a aguardar quando pool de ativos está vazio
 EMPTY_POOL_SLEEP_MULTIPLIER = 10
 
+# Boot retry: tentativas e intervalo de espera ao buscar ativos na inicialização.
+# Quando a API retorna None (instabilidade de websocket), o bot tenta novamente
+# até BOOT_MAX_RETRIES vezes antes de iniciar com pool vazio.
+BOOT_MAX_RETRIES: int = 10
+BOOT_RETRY_SLEEP_S: float = 3.0
+
 # Presets
 PRESET_PATH: Optional[Path] = None
 
@@ -5800,8 +5806,8 @@ if __name__ == '__main__':
             "encontrada no Ativos.txt. Verifique o arquivo."
         )
 
-    _BOOT_MAX_RETRIES = 10
-    _BOOT_RETRY_SLEEP = 3.0
+    _BOOT_MAX_RETRIES = BOOT_MAX_RETRIES
+    _BOOT_RETRY_SLEEP = BOOT_RETRY_SLEEP_S
     ativos_lista: List[Tuple[str, str]] = []
 
     for _boot_attempt in range(_BOOT_MAX_RETRIES):
