@@ -104,3 +104,5 @@ bb_width_min         = 0.00045
 slope_min            = 0.000060
 entry_window_seconds = 25
 
+# Nota: Agendamento (Programador) é configurado interativamente no menu de startup.
+# Não requer chaves neste arquivo — o menu pergunta Sim/Não a cada execução.
