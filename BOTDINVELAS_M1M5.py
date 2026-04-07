@@ -247,17 +247,17 @@ ATR_RATIO_QUEUE_M5 = deque(maxlen=ATR_ADAPTIVE_WINDOW)
 ENABLE_TREND_STRENGTH_FILTER = True
 ADX_PERIOD = 14
 ADX_MIN_M1 = 3                 # ← AJUSTE: ADX mínimo M1 (10.5 = aceita mercado fraco)
-ADX_MIN_M5 = 18.0
+ADX_MIN_M5 = 8.0
 BB_PERIOD = 20
 BB_STD = 2.0
 BB_WIDTH_MIN_M1 = 0.00003         # ← AJUSTE: BB width mínimo M1 (0.00018 = aceita compressão)
-BB_WIDTH_MIN_M5 = 0.00070
+BB_WIDTH_MIN_M5 = 0.00045
 SLOPE_LOOKBACK = 8
 SLOPE_MIN_M1 = 0.000003            # ← AJUSTE: slope EMA mínimo M1 (0.00003 = aceita lateral)
-SLOPE_MIN_M5 = 0.00012
+SLOPE_MIN_M5 = 0.00006
 
 ENTRY_WINDOW_SECONDS_M1 = 30      # ← AJUSTE: janela de entrada M1 (18s = menos missed_entry)
-ENTRY_WINDOW_SECONDS_M5 = 25
+ENTRY_WINDOW_SECONDS_M5 = 30
 
 OPEN_TIME_CACHE_TTL_S = 15
 _last_open_time_cache: Dict[Tuple[str, Optional[str]], Tuple[bool, float]] = {}
@@ -286,11 +286,11 @@ MAX_ASSETS_M5: int = 4
 # M5 DYNAMIC POOL MANAGER
 # =========================
 M5_POOL_DYNAMIC_ENABLE: bool = False
-M5_POOL_REBALANCE_MINUTES: float = 15.0
-M5_POOL_DEAD_MINUTES: float = 10.0
+M5_POOL_REBALANCE_MINUTES: float = 18.0
+M5_POOL_DEAD_MINUTES: float = 12.0
 M5_POOL_SWAP_MAX_NORMAL: int = 1
 M5_POOL_SWAP_MAX_DEAD: int = 2
-M5_POOL_ASSET_COOLDOWN_MINUTES: float = 30.0
+M5_POOL_ASSET_COOLDOWN_MINUTES: float = 35.0
 M5_POOL_SCORE_W_CONFIRMED: float = 3.0
 M5_POOL_SCORE_W_EXPIRED_REJECTED: float = 1.0
 M5_POOL_SCORE_W_MISSED: float = 1.5
@@ -308,7 +308,7 @@ M5_POOL_SCORE_WINDOW_MINUTES: float = 60.0
 # Dead-market detection via Donchian range (M5 pool)
 M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD: int = 10
 M5_POOL_DEAD_MARKET_RANGE_RATIO_THR: float = 0.002
-M5_POOL_DEAD_MARKET_PENALTY: float = 5.0
+M5_POOL_DEAD_MARKET_PENALTY: float = 3.0
 
 # Universe-size-aware swap scaling
 M5_POOL_SWAP_SCALE_WITH_UNIVERSE: bool = True
@@ -371,7 +371,7 @@ M5_ALLOW_OPEN_MARKET: bool = True
 
 # V15 per-timeframe (defaults = valores globais; sobrescritos em _load_from_config)
 V15_SCORE_MIN_M1: int = 55
-V15_SCORE_MIN_M5: int = 55
+V15_SCORE_MIN_M5: int = 58
 V15_SCORE_GAP_MIN_M1: int = 1
 V15_SCORE_GAP_MIN_M5: int = 1
 V15_CONFIRM_POLLS_M1: int = 1
@@ -1142,6 +1142,8 @@ _RECONNECT_BACKOFF_MAX_S: float = 120.0  # backoff máximo entre tentativas
 # Intervalo mínimo entre verificações de conexão (segundos): evita overhead em loop rápido
 _RECONNECT_CHECK_INTERVAL_S: float = 30.0
 _last_connect_check_ts: float = 0.0
+# Número de tentativas automáticas de _safe_get_all_open_time antes de reportar erro
+_GET_ALL_OPEN_TIME_MAX_RETRIES: int = 3
 
 # ---- Watchdog / SAFE-HOLD mode ----
 # Ativado quando a conexão está degradada (warnings "late 30 sec", NoneType subscriptable,
@@ -1150,7 +1152,7 @@ _SAFE_HOLD_MODE: bool = False
 _SAFE_HOLD_TRIGGERED_AT: float = 0.0
 # Contadores de sinais de degradação (resetados ao reconectar)
 _DEGRADED_LATE_WARNINGS: int = 0
-_DEGRADED_LATE_WARNING_THRESHOLD: int = 3   # nº de "late 30 sec" antes de entrar em SAFE_HOLD
+_DEGRADED_LATE_WARNING_THRESHOLD: int = 5   # nº de "late 30 sec" antes de entrar em SAFE_HOLD
 _DEGRADED_NONE_ERRORS: int = 0
 _DEGRADED_NONE_ERROR_THRESHOLD: int = 1    # primeiro NoneType subscriptable já entra em SAFE_HOLD
 # Timestamp da última vez que candles foram vistos (por ativo) após reconexão:
@@ -1293,33 +1295,41 @@ def _ensure_connected() -> bool:
     return False
 
 
-def _safe_get_all_open_time() -> Optional[Dict]:
-    """Chama API.get_all_open_time() capturando erros de conexão degradada.
+def _safe_get_all_open_time(max_retries: int = _GET_ALL_OPEN_TIME_MAX_RETRIES) -> Optional[Dict]:
+    """Chama API.get_all_open_time() com retry automático em falhas.
 
     Detecta NoneType subscriptable (API retornou None) e WebSocketConnectionClosedException,
     reporta ao watchdog e retorna None. O caller deve verificar o retorno e
     aguardar reconexão antes de continuar.
     """
-    try:
-        result = API.get_all_open_time()
-        if result is None:
-            report_none_subscript_error()
+    for attempt in range(max_retries):
+        try:
+            result = API.get_all_open_time()
+            if result is None:
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                report_none_subscript_error()
+                return None
+            return result
+        except TypeError as e:
+            # Covers 'NoneType object is not subscriptable' and similar None-related TypeErrors
+            if 'subscriptable' in str(e) or 'NoneType' in str(e):
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                report_none_subscript_error()
+            else:
+                _log_error("get_all_open_time: TypeError inesperado.", e)
             return None
-        return result
-    except TypeError as e:
-        # Covers 'NoneType object is not subscriptable' and similar None-related TypeErrors
-        if 'subscriptable' in str(e) or 'NoneType' in str(e):
-            report_none_subscript_error()
-        else:
-            _log_error("get_all_open_time: TypeError inesperado.", e)
-        return None
-    except Exception as e:
-        _cls = type(e).__name__
-        if 'WebSocketConnectionClosedException' in _cls or 'ConnectionClosed' in _cls:
-            report_websocket_closed()
-        else:
-            _log_error("get_all_open_time: exceção.", e)
-        return None
+        except Exception as e:
+            _cls = type(e).__name__
+            if 'WebSocketConnectionClosedException' in _cls or 'ConnectionClosed' in _cls:
+                report_websocket_closed()
+            else:
+                _log_error("get_all_open_time: exceção.", e)
+            return None
+    return None
 
 
 def get_profile_name() -> str:
@@ -1816,65 +1826,44 @@ def passes_trend_strength_filter(tf_min: int, velas: List[Dict[str, Any]]) -> bo
     bbw = bb_width_norm(closes, period=BB_PERIOD, std_mult=BB_STD)
     slope = ema_slope_norm(closes, period=21, lookback=SLOPE_LOOKBACK)
 
-    if tf_min == 1:
-        # M1: regra "2-de-4" — exige pelo menos 2 de 4 filtros passando (ATR, ADX, BBW, SLOPE)
-        # Estratégia livre: mais entradas sem abrir mão de todo critério de qualidade.
-        # ← AJUSTE: mude para "failures > 1" para voltar ao "3-de-4" (mais rígido/menos entradas)
-        #           mude para "failures > 3" para modo ultra-livre (pelo menos 1 de 4 basta)
-        failures = 0
-        # Filtro ATR integrado (para regra 2-de-4, evita dois saltos de função)
-        if ENABLE_ATR_FILTER:
-            atr = calculate_atr_from_candles(velas, periodo=ATR_PERIOD)
-            mean_close = sum(closes[-ATR_PERIOD:]) / ATR_PERIOD if len(closes) >= ATR_PERIOD else (closes[-1] if closes else 0.0)
-            if atr is None or mean_close == 0:
+    # M1 e M5: regra "2-de-4" — exige pelo menos 2 de 4 filtros passando (ATR, ADX, BBW, SLOPE)
+    # ← AJUSTE: mude para "failures > 1" para voltar ao "3-de-4" (mais rígido/menos entradas)
+    #           mude para "failures > 3" para modo ultra-livre (pelo menos 1 de 4 basta)
+    failures = 0
+    # Filtro ATR integrado (para regra 2-de-4, evita dois saltos de função)
+    if ENABLE_ATR_FILTER:
+        atr = calculate_atr_from_candles(velas, periodo=ATR_PERIOD)
+        mean_close = sum(closes[-ATR_PERIOD:]) / ATR_PERIOD if len(closes) >= ATR_PERIOD else (closes[-1] if closes else 0.0)
+        if atr is None or mean_close == 0:
+            failures += 1
+        else:
+            ratio = atr / mean_close
+            thr = adaptive_atr_threshold_update(tf_min, ratio)
+            if ratio < thr:
+                _log_blocked("atr_low", f"tf={tf_min} ratio={ratio:.6f} thr={thr:.6f}")
                 failures += 1
-            else:
-                ratio = atr / mean_close
-                thr = adaptive_atr_threshold_update(tf_min, ratio)
-                if ratio < thr:
-                    _log_blocked("atr_low", f"tf={tf_min} ratio={ratio:.6f} thr={thr:.6f}")
-                    failures += 1
-        if adx is None or adx < adx_min:
-            _log_blocked("trend_weak_adx", f"tf={tf_min} adx={adx}")
-            failures += 1
-        if bbw is None or bbw < bb_min:
-            _log_blocked("range_squeeze_bbw", f"tf={tf_min} bbw={bbw}")
-            failures += 1
-        if slope is None or slope < slope_min:
-            _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope:.8f} slope_min={slope_min:.8f}")
-            failures += 1
-        if failures > 2:
-            return False
-        return True
-
-    # M5: mantém todos os filtros obrigatórios (comportamento original)
     if adx is None or adx < adx_min:
         _log_blocked("trend_weak_adx", f"tf={tf_min} adx={adx}")
-        return False
-
+        failures += 1
     if bbw is None or bbw < bb_min:
         _log_blocked("range_squeeze_bbw", f"tf={tf_min} bbw={bbw}")
-        return False
-
+        failures += 1
     if slope is None or slope < slope_min:
         _log_blocked("ema_flat_slope", f"tf={tf_min} slope={slope:.8f} slope_min={slope_min:.8f}")
+        failures += 1
+    if failures > 2:
         return False
-
     return True
 
 
 def passes_all_regime_filters(tf_min: int, velas: List[Dict[str, Any]]) -> bool:
     """Verifica todos os filtros de regime de forma unificada.
 
-    M1: aplica regra "2-de-4" combinando ATR + ADX + BBW + SLOPE internamente
+    M1 e M5: aplica regra "2-de-4" combinando ATR + ADX + BBW + SLOPE internamente
         em passes_trend_strength_filter. Não chama passes_atr_filter separado.
-    M5: mantém comportamento original — ATR e trend_strength são filtros rígidos.
     """
-    if tf_min == 1:
-        # ATR já está integrado na regra 2-de-4 dentro de passes_trend_strength_filter
-        return passes_trend_strength_filter(tf_min, velas)
-    # M5: todos os filtros são obrigatórios
-    return passes_atr_filter(tf_min, velas) and passes_trend_strength_filter(tf_min, velas)
+    # ATR já está integrado na regra 2-de-4 dentro de passes_trend_strength_filter
+    return passes_trend_strength_filter(tf_min, velas)
 
 
 # =========================
@@ -2002,15 +1991,15 @@ def is_tweezer_bottom(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> bool:
 
 
 def _candle_engulf_score(prev_c: Dict[str, Any], cur_c: Dict[str, Any]) -> Tuple[int, Optional[str]]:
-    """Retorna pontuação de padrão Engolfo ou Pinça (0–15 pts) e direção."""
+    """Retorna pontuação de padrão Engolfo (20 pts) ou Pinça (12 pts) e direção, ou (0, None) se nenhum padrão for detectado."""
     if is_engulfing_bullish(prev_c, cur_c):
-        return 15, "call"
+        return 20, "call"
     if is_engulfing_bearish(prev_c, cur_c):
-        return 15, "put"
+        return 20, "put"
     if is_tweezer_bottom(prev_c, cur_c):
-        return 10, "call"
+        return 12, "call"
     if is_tweezer_top(prev_c, cur_c):
-        return 10, "put"
+        return 12, "put"
     return 0, None
 
 
