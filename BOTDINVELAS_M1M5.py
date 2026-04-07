@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-06-single-entry-open-market-v15"
+BOTDIN_VERSION = "2026-04-07-canonical-asset-suffix-v15"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -965,11 +965,16 @@ def _log_sinal_acionavel(
 # Display helpers
 # =========================
 def display_asset_name(asset: str) -> str:
+    """Retorna nome de ativo formatado para exibição.
+
+    Sufixo canônico para exibição:
+      - mercado aberto → '-op'  (minúsculo, conforme Ativos.txt)
+      - OTC            → '-OTC' (maiúsculo)
+    Não converte '-op' para '-OP': a forma minúscula é o padrão configurado.
+    """
     if not isinstance(asset, str):
         return str(asset)
-    s = asset
-    s = re.sub(r'-otc\b', '-OTC', s, flags=re.IGNORECASE)
-    s = re.sub(r'-op\b', '-OP', s, flags=re.IGNORECASE)
+    s = re.sub(r'-otc\b', '-OTC', asset, flags=re.IGNORECASE)
     return s
 
 
@@ -1360,21 +1365,62 @@ def _normalize_asset_name(name: str) -> str:
     return s
 
 
+def _canonical_asset_name(name: str) -> str:
+    """Retorna o nome canônico do ativo preservando a intenção de mercado do Ativos.txt.
+
+    Regras de canonicalização:
+      - Base do par (ex.: EURUSD) → sempre em MAIÚSCULO.
+      - Sufixo de mercado aberto  → '-op'  (minúsculo).
+      - Sufixo OTC                → '-OTC' (maiúsculo).
+      - Sem sufixo (ex.: DXY)    → sem sufixo (retornado em maiúsculo).
+      - Sufixo combinado '-OTC-OP' / '-OTC-op' → '-OTC' (OTC prevalece).
+
+    Esta função é usada para normalizar tokens do Ativos.txt de forma que a
+    representação canônica seja consistente independentemente da caixa digitada.
+
+    Exemplos:
+        'EURUSD-op'   → 'EURUSD-op'
+        'EURUSD-OP'   → 'EURUSD-op'
+        'EURUSD-OTC'  → 'EURUSD-OTC'
+        'EURUSD-otc'  → 'EURUSD-OTC'
+        'eurusd'      → 'EURUSD'
+        'BTCUSD-OTC-op' → 'BTCUSD-OTC'
+    """
+    if not isinstance(name, str):
+        return ''
+    upper = _normalize_asset_name(name)  # strip non-alphanum, uppercase
+    # Combined suffix: OTC takes precedence
+    if upper.endswith('-OTC-OP'):
+        base = upper[:-7]
+        return f"{base}-OTC"
+    if upper.endswith('-OTC'):
+        base = upper[:-4]
+        return f"{base}-OTC"
+    if upper.endswith('-OP'):
+        base = upper[:-3]
+        return f"{base}-op"
+    # No recognised suffix (e.g. DXY, AXY)
+    return upper
+
+
 def _strip_market_suffix(name_n: str) -> str:
-    """Remove sufixos de mercado conhecidos de um nome de ativo normalizado.
+    """Remove sufixos de mercado conhecidos de um nome de ativo (case-insensitive).
 
     Trata combinações mistas como '-OTC-OP' (ex.: BTCUSD-OTC-op da API),
-    além dos sufixos simples '-OTC' e '-OP'. A ordem de verificação garante
-    que o sufixo mais longo (combinado) seja removido primeiro.
+    além dos sufixos simples '-OTC' e '-OP'. A comparação é feita em maiúsculo
+    para suportar tanto a forma canônica '-op' (mercado aberto) como '-OTC' (OTC).
 
     Exemplos:
         'BTCUSD-OTC-OP' → 'BTCUSD'
+        'BTCUSD-OTC-op' → 'BTCUSD'
         'EURUSD-OTC'    → 'EURUSD'
         'GBPUSD-OP'     → 'GBPUSD'
-        'DXY'           → 'DXY'   (sem sufixo — retornado sem alteração)
+        'GBPUSD-op'     → 'GBPUSD'   (sufixo canônico de mercado aberto)
+        'DXY'           → 'DXY'      (sem sufixo — retornado sem alteração)
     """
+    upper = name_n.upper()
     for sfx in ('-OTC-OP', '-OTC', '-OP'):
-        if name_n.endswith(sfx):
+        if upper.endswith(sfx):
             return name_n[:-len(sfx)]
     return name_n
 
@@ -3314,18 +3360,25 @@ def load_ativos_por_categoria(tf_min: int) -> Tuple[List[str], List[str]]:
     """Lê Ativos.txt e retorna (lista_digital, lista_binaria) para o timeframe tf_min.
 
     Formato esperado:
-        [DIGITAL M1]
-        EURUSD-OP
-        EURJPY-OP
+        [DIGITAL M5]
+        EURUSD-op
+        EURJPY-op
         EURGBP-OTC
 
-        [BINARIA M1]
-        EURUSD-OP
+        [BINARIA M5]
+        EURUSD-op
         ...
 
     tf_min: 1 para M1, 5 para M5, 15 para M15, etc.
     Linhas vazias e linhas com # são ignoradas.
-    -OP e -OTC podem ser misturados em qualquer seção.
+    -op (minúsculo) e -OTC (maiúsculo) podem ser misturados em qualquer seção.
+
+    Cada linha é normalizada via _canonical_asset_name():
+      - Base do par em maiúsculo.
+      - Sufixo de mercado aberto → '-op'  (minúsculo, canônico).
+      - Sufixo OTC               → '-OTC' (maiúsculo, canônico).
+    Isso garante que a forma canônica do Ativos.txt seja preservada mesmo que o
+    usuário escreva '-OP', '-Op', '-otc' etc.
 
     Retorna ([], []) se o arquivo não existir, se ocorrer erro na leitura,
     ou se não houver seções correspondentes ao tf_min informado.
@@ -3355,9 +3408,9 @@ def load_ativos_por_categoria(tf_min: int) -> Tuple[List[str], List[str]]:
                             current_section = None
                         continue
                     if current_section == 'digital':
-                        digital.append(_normalize_asset_name(line))
+                        digital.append(_canonical_asset_name(line))
                     elif current_section == 'binaria':
-                        binaria.append(_normalize_asset_name(line))
+                        binaria.append(_canonical_asset_name(line))
     except Exception:
         pass
 
@@ -3424,13 +3477,32 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
 
     # Constrói mapa de ativos abertos: normalized_name → (real_name, categoria)
     # Digital tem prioridade; binária entra apenas se não houver digital equivalente.
-    # Dois índices são mantidos:
-    #   open_map         — chave = nome normalizado completo (ex.: 'BTCUSD-OTC-OP')
-    #   open_map_by_base — chave = nome base sem sufixo  (ex.: 'BTCUSD')
-    # O segundo índice permite lookup fuzzy quando o nome no Ativos.txt e o nome
-    # real da API diferem apenas no sufixo (ex.: 'BTCUSD-OTC' vs 'BTCUSD-OTC-op').
+    # Três índices são mantidos:
+    #   open_map              — chave = nome normalizado completo (ex.: 'BTCUSD-OTC-OP')
+    #   open_map_by_base_otc  — chave = nome base → variante OTC aberta (ex.: 'BTCUSD')
+    #   open_map_by_base_op   — chave = nome base → variante mercado-aberto (-OP) aberta
+    #   open_map_by_base      — chave = nome base → qualquer variante (índices sem sufixo)
+    # Os índices separados por tipo de mercado permitem lookup fuzzy sem cruzar
+    # silenciosamente entre variantes OTC e -OP (ex.: Ativos.txt 'EURUSD-op' não
+    # pode cair na variante 'EURUSD-OTC' da API por simples coincidência de base).
     open_map: Dict[str, Tuple[str, str]] = {}
+    open_map_by_base_otc: Dict[str, Tuple[str, str]] = {}
+    open_map_by_base_op: Dict[str, Tuple[str, str]] = {}
     open_map_by_base: Dict[str, Tuple[str, str]] = {}
+
+    def _add_to_base_maps(norm: str, name: str, cat: str) -> None:
+        """Adiciona ao mapa de base correto conforme sufixo do nome normalizado (uppercase)."""
+        base = _strip_market_suffix(norm)
+        if norm.endswith('-OTC') or norm.endswith('-OTC-OP'):
+            if base not in open_map_by_base_otc:
+                open_map_by_base_otc[base] = (name, cat)
+        elif norm.endswith('-OP'):
+            if base not in open_map_by_base_op:
+                open_map_by_base_op[base] = (name, cat)
+        else:
+            # Sem sufixo (ex.: DXY, JXY) — índices de mercado aberto
+            if base not in open_map_by_base:
+                open_map_by_base[base] = (name, cat)
 
     digital_table = ot.get('digital', {})
     if isinstance(digital_table, dict):
@@ -3445,9 +3517,7 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             norm = _normalize_asset_name(name)
             if norm not in open_map:
                 open_map[norm] = (name, 'digital')
-            base = _strip_market_suffix(norm)
-            if base not in open_map_by_base:
-                open_map_by_base[base] = (name, 'digital')
+            _add_to_base_maps(norm, name, 'digital')
 
     binary_table = ot.get('binary', {})
     if isinstance(binary_table, dict):
@@ -3462,9 +3532,7 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             norm = _normalize_asset_name(name)
             if norm not in open_map:  # digital já tem prioridade
                 open_map[norm] = (name, 'binary')
-            base = _strip_market_suffix(norm)
-            if base not in open_map_by_base:  # digital já tem prioridade
-                open_map_by_base[base] = (name, 'binary')
+            _add_to_base_maps(norm, name, 'binary')
 
     result: List[Tuple[str, str]] = []
     used: set = set()
@@ -3495,23 +3563,73 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         return None
 
     def _lookup_open_map(norm_name: str) -> Optional[Tuple[str, str]]:
-        """Busca ativo no open_map com fallback fuzzy por nome base.
+        """Busca ativo no open_map com fallback fuzzy respeitando o tipo de mercado.
 
-        1ª tentativa: lookup exato por nome normalizado completo.
-        2ª tentativa (fuzzy): strip de sufixos de ambos os lados e compara raiz.
-          Ex.: 'BTCUSD-OTC' (Ativos.txt) → base 'BTCUSD' → encontra 'BTCUSD-OTC-op' (API).
+        1ª tentativa: lookup exato por nome normalizado (uppercase) completo.
+          Ex.: 'EURUSD-op' → key 'EURUSD-OP' → encontra 'EURUSD-op' na API.
+
+        2ª tentativa (fuzzy, tipo-ciente): strip de sufixos e compara raiz,
+          mas APENAS no mapa do tipo de mercado correspondente ao sufixo pedido:
+          - Sufixo '-OTC' no pedido → busca somente em open_map_by_base_otc.
+          - Sufixo '-OP'  no pedido → busca somente em open_map_by_base_op.
+          - Sem sufixo (índice)    → busca em open_map_by_base (qualquer).
+
+          Esta separação garante que 'EURUSD-op' nunca retorne 'EURUSD-OTC' da API
+          por simples coincidência de base ('EURUSD'), eliminando a substituição
+          silenciosa entre variantes de mercado aberto e OTC.
+
+        Loga 'api_symbol_normalized' quando o fallback fuzzy é usado com sucesso.
+        Loga 'asset_wrong_market_type' quando a variante errada existe mas a certa não.
 
         Retorna (real_name, categoria) ou None se não encontrado.
         """
-        entry = open_map.get(norm_name)
+        # Normaliza o nome pedido para chave uppercase (independente do sufixo canônico)
+        key = _normalize_asset_name(norm_name)
+        entry = open_map.get(key)
         if entry is not None:
             return entry
-        # Fallback: comparar por nome base sem sufixo
-        base = _strip_market_suffix(norm_name)
-        if base:
+
+        # Fallback fuzzy por base, respeitando tipo de mercado
+        base = _strip_market_suffix(key)
+        if not base:
+            return None
+
+        if key.endswith('-OTC'):
+            entry = open_map_by_base_otc.get(base)
+            if entry is not None:
+                logging.info(
+                    "api_symbol_normalized | requested=%s matched_api=%s base=%s type=OTC",
+                    norm_name, entry[0], base,
+                )
+                return entry
+            # Rejeição explícita: variante OTC não disponível, mas OP existe
+            if open_map_by_base_op.get(base):
+                _log_blocked(
+                    "asset_wrong_market_type",
+                    f"requested={norm_name} api_has_op={open_map_by_base_op[base][0]} "
+                    f"reason=only_op_variant_open src=lookup tf={tf_min}",
+                )
+        elif key.endswith('-OP'):
+            entry = open_map_by_base_op.get(base)
+            if entry is not None:
+                logging.info(
+                    "api_symbol_normalized | requested=%s matched_api=%s base=%s type=OP",
+                    norm_name, entry[0], base,
+                )
+                return entry
+            # Rejeição explícita: variante OP não disponível, mas OTC existe
+            if open_map_by_base_otc.get(base):
+                _log_blocked(
+                    "asset_wrong_market_type",
+                    f"requested={norm_name} api_has_otc={open_map_by_base_otc[base][0]} "
+                    f"reason=only_otc_variant_open src=lookup tf={tf_min}",
+                )
+        else:
+            # Sem sufixo (índices como DXY, JXY)
             entry = open_map_by_base.get(base)
             if entry is not None:
                 return entry
+
         return None
 
     def _diag_not_found(norm_name: str, source: str) -> None:
@@ -3521,6 +3639,8 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         e informa o motivo pelo qual foi rejeitado: filtro de mercado, fechado, ou
         simplesmente ausente da resposta da API.
         """
+        # Normaliza para uppercase para comparação com nomes da API
+        norm_name_key = _normalize_asset_name(norm_name)
         # Busca o ativo na tabela completa (sem filtro de mercado) para diagnóstico
         found_raw: Optional[str] = None
         found_table: Optional[str] = None
@@ -3531,7 +3651,7 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             for raw_name, info in table.items():
                 raw_norm = _normalize_asset_name(raw_name)
                 raw_base = _strip_market_suffix(raw_norm)
-                if raw_norm == norm_name or raw_base == _strip_market_suffix(norm_name):
+                if raw_norm == norm_name_key or raw_base == _strip_market_suffix(norm_name_key):
                     found_raw = raw_name
                     found_table = table_key
                     reason = _market_filter_skip_reason(str(raw_name).upper())
