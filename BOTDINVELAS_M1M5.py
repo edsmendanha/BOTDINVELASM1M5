@@ -714,6 +714,12 @@ EARLY_LOSS_EPS = 0.02
 # Número de ciclos de IDLE_SLEEP_S_M5 a aguardar quando pool de ativos está vazio
 EMPTY_POOL_SLEEP_MULTIPLIER = 10
 
+# Boot retry: tentativas e intervalo de espera ao buscar ativos na inicialização.
+# Quando a API retorna None (instabilidade de websocket), o bot tenta novamente
+# até BOOT_MAX_RETRIES vezes antes de iniciar com pool vazio.
+BOOT_MAX_RETRIES: int = 10
+BOOT_RETRY_SLEEP_S: float = 3.0
+
 # Presets
 PRESET_PATH: Optional[Path] = None
 
@@ -1354,6 +1360,25 @@ def _normalize_asset_name(name: str) -> str:
     return s
 
 
+def _strip_market_suffix(name_n: str) -> str:
+    """Remove sufixos de mercado conhecidos de um nome de ativo normalizado.
+
+    Trata combinações mistas como '-OTC-OP' (ex.: BTCUSD-OTC-op da API),
+    além dos sufixos simples '-OTC' e '-OP'. A ordem de verificação garante
+    que o sufixo mais longo (combinado) seja removido primeiro.
+
+    Exemplos:
+        'BTCUSD-OTC-OP' → 'BTCUSD'
+        'EURUSD-OTC'    → 'EURUSD'
+        'GBPUSD-OP'     → 'GBPUSD'
+        'DXY'           → 'DXY'   (sem sufixo — retornado sem alteração)
+    """
+    for sfx in ('-OTC-OP', '-OTC', '-OP'):
+        if name_n.endswith(sfx):
+            return name_n[:-len(sfx)]
+    return name_n
+
+
 def _categories_priority(preferred_tipo):
     preferred = 'digital' if 'digital' in str(preferred_tipo).lower() else 'binary'
     order = []
@@ -1368,8 +1393,11 @@ def _parse_user_asset_input(raw: str) -> Dict[str, Any]:
     s2 = re.sub(r'\s+', '', s)
     upper = s2.upper()
 
+    # Detecta sufixo de mercado (case-insensitive graças ao upper()).
+    # Verifica primeiro a combinação '-OTC-OP' (ex.: BTCUSD-OTC-op da IQ Option),
+    # depois os sufixos simples. OTC tem precedência quando presente na combinação.
     suffix = None
-    if upper.endswith("-OTC"):
+    if upper.endswith("-OTC-OP") or upper.endswith("-OTC"):
         suffix = "OTC"
     elif upper.endswith("-OP"):
         suffix = "OP"
@@ -1425,6 +1453,9 @@ def find_preferred_variant_with_rules(base: str, allow_otc: bool) -> Tuple[Optio
         return None, None
 
     base_n = _normalize_asset_name(base)
+    # base_stripped: nome sem qualquer sufixo de mercado, para comparação por raiz.
+    # Ex.: 'BTCUSD-OTC' → 'BTCUSD', 'BTCUSD-OTC-OP' → 'BTCUSD'.
+    base_stripped = _strip_market_suffix(base_n)
 
     name, cat = _find_open_in_table(ot, base)
     if name:
@@ -1442,9 +1473,23 @@ def find_preferred_variant_with_rules(base: str, allow_otc: bool) -> Tuple[Optio
 
             name2_u = str(name2).upper()
             name2_n = _normalize_asset_name(name2_u)
+            name2_stripped = _strip_market_suffix(name2_n)
 
+            # Exact match (normalized)
             if name2_n == base_n:
                 return name2, categoria
+            # Match by stripped base name (handles -OTC-OP, -OTC, -OP variants)
+            # e.g. Ativos.txt 'BTCUSD-OTC' matches API 'BTCUSD-OTC-op'
+            if base_stripped and name2_stripped == base_stripped:
+                # OTC takes precedence over OP in combined names like 'BTCUSD-OTC-OP'
+                if '-OTC' in name2_u:
+                    candidates_otc.append((name2, categoria))
+                elif '-OP' in name2_u:
+                    candidates_op.append((name2, categoria))
+                else:
+                    candidates_common.append((name2, categoria))
+                continue
+            # Substring fallback (legacy: base_n is a prefix/infix of name2_n)
             if base_n and (base_n in name2_n):
                 if '-OTC' in name2_u:
                     candidates_otc.append((name2, categoria))
@@ -3161,8 +3206,9 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
     if ot is None:
         return ativo, ativo_chave
     try:
-        # Normalizar base do ativo (strip -OP / -OTC)
-        base = _normalize_asset_name(re.sub(r'[-]?(OTC|OP)$', '', ativo.upper()))
+        # Normalizar base do ativo: usa _strip_market_suffix para lidar corretamente
+        # com sufixos combinados como '-OTC-OP' (ex.: 'BTCUSD-OTC-op' da IQ Option).
+        base = _strip_market_suffix(_normalize_asset_name(ativo))
         # use_otc global tem precedência: só permite OTC se explicitamente habilitado
         allow_otc = use_otc
         # Tentar digital primeiro
@@ -3175,7 +3221,8 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
                 if 'OTC' in str(name).upper() and not allow_otc:
                     continue
                 name_norm = _normalize_asset_name(str(name))
-                if name_norm == base or name_norm.startswith(base) or base.startswith(name_norm):
+                name_base = _strip_market_suffix(name_norm)
+                if name_base == base or name_norm == _normalize_asset_name(ativo):
                     return str(name), 'digital'
         # Digital fechado: verificar se binária ainda está aberta
         if _is_open(ot, ativo_chave, ativo):
@@ -3376,8 +3423,14 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             return False
 
     # Constrói mapa de ativos abertos: normalized_name → (real_name, categoria)
-    # Digital tem prioridade; binária entra apenas se não houver digital equivalente
+    # Digital tem prioridade; binária entra apenas se não houver digital equivalente.
+    # Dois índices são mantidos:
+    #   open_map         — chave = nome normalizado completo (ex.: 'BTCUSD-OTC-OP')
+    #   open_map_by_base — chave = nome base sem sufixo  (ex.: 'BTCUSD')
+    # O segundo índice permite lookup fuzzy quando o nome no Ativos.txt e o nome
+    # real da API diferem apenas no sufixo (ex.: 'BTCUSD-OTC' vs 'BTCUSD-OTC-op').
     open_map: Dict[str, Tuple[str, str]] = {}
+    open_map_by_base: Dict[str, Tuple[str, str]] = {}
 
     digital_table = ot.get('digital', {})
     if isinstance(digital_table, dict):
@@ -3392,6 +3445,9 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             norm = _normalize_asset_name(name)
             if norm not in open_map:
                 open_map[norm] = (name, 'digital')
+            base = _strip_market_suffix(norm)
+            if base not in open_map_by_base:
+                open_map_by_base[base] = (name, 'digital')
 
     binary_table = ot.get('binary', {})
     if isinstance(binary_table, dict):
@@ -3406,6 +3462,9 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             norm = _normalize_asset_name(name)
             if norm not in open_map:  # digital já tem prioridade
                 open_map[norm] = (name, 'binary')
+            base = _strip_market_suffix(norm)
+            if base not in open_map_by_base:  # digital já tem prioridade
+                open_map_by_base[base] = (name, 'binary')
 
     result: List[Tuple[str, str]] = []
     used: set = set()
@@ -3435,25 +3494,84 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             return "m5_allow_otc=false+m5_allow_open_market=false"
         return None
 
+    def _lookup_open_map(norm_name: str) -> Optional[Tuple[str, str]]:
+        """Busca ativo no open_map com fallback fuzzy por nome base.
+
+        1ª tentativa: lookup exato por nome normalizado completo.
+        2ª tentativa (fuzzy): strip de sufixos de ambos os lados e compara raiz.
+          Ex.: 'BTCUSD-OTC' (Ativos.txt) → base 'BTCUSD' → encontra 'BTCUSD-OTC-op' (API).
+
+        Retorna (real_name, categoria) ou None se não encontrado.
+        """
+        entry = open_map.get(norm_name)
+        if entry is not None:
+            return entry
+        # Fallback: comparar por nome base sem sufixo
+        base = _strip_market_suffix(norm_name)
+        if base:
+            entry = open_map_by_base.get(base)
+            if entry is not None:
+                return entry
+        return None
+
+    def _diag_not_found(norm_name: str, source: str) -> None:
+        """Loga diagnóstico quando ativo do Ativos.txt não é encontrado no pool aberto.
+
+        Verifica se o ativo existe na tabela de ativos abertos (sem filtro de mercado)
+        e informa o motivo pelo qual foi rejeitado: filtro de mercado, fechado, ou
+        simplesmente ausente da resposta da API.
+        """
+        # Busca o ativo na tabela completa (sem filtro de mercado) para diagnóstico
+        found_raw: Optional[str] = None
+        found_table: Optional[str] = None
+        for table_key in ('digital', 'binary'):
+            table = ot.get(table_key, {})
+            if not isinstance(table, dict):
+                continue
+            for raw_name, info in table.items():
+                raw_norm = _normalize_asset_name(raw_name)
+                raw_base = _strip_market_suffix(raw_norm)
+                if raw_norm == norm_name or raw_base == _strip_market_suffix(norm_name):
+                    found_raw = raw_name
+                    found_table = table_key
+                    reason = _market_filter_skip_reason(str(raw_name).upper())
+                    is_open = isinstance(info, dict) and bool(info.get('open'))
+                    if not is_open:
+                        _log_blocked(
+                            "asset_closed_on_api",
+                            f"ativo={display_asset_name(raw_name)} "
+                            f"norm={norm_name} src={source} tf={tf_min}",
+                        )
+                    elif reason:
+                        _log_blocked(
+                            f"market_filter_skip [{reason}]",
+                            f"ativo={display_asset_name(raw_name)} "
+                            f"norm={norm_name} src={source} tf={tf_min}",
+                        )
+                    else:
+                        _log_blocked(
+                            "asset_open_but_not_matched",
+                            f"ativo={display_asset_name(raw_name)} "
+                            f"norm_api={raw_norm} norm_list={norm_name} "
+                            f"table={table_key} src={source} tf={tf_min}",
+                        )
+                    break
+            if found_raw:
+                break
+        if found_raw is None:
+            _log_blocked(
+                "asset_not_in_api_response",
+                f"norm={norm_name} src={source} tf={tf_min} "
+                f"(ausente em digital+binary da API)",
+            )
+
     # 1ª passagem: ativos da lista DIGITAL do Ativos.txt que estejam abertos
     for norm_name in digital_lista:
         if len(result) >= max_count:
             break
-        entry = open_map.get(norm_name)
+        entry = _lookup_open_map(norm_name)
         if entry is None:
-            # Verifica se o ativo existe em algum mercado mas foi filtrado
-            for table_key in ('digital', 'binary'):
-                table = ot.get(table_key, {})
-                if isinstance(table, dict):
-                    for raw_name in table:
-                        if _normalize_asset_name(raw_name) == norm_name:
-                            reason = _market_filter_skip_reason(str(raw_name).upper())
-                            if reason:
-                                _log_blocked(
-                                    f"market_filter_skip [{reason}]",
-                                    f"ativo={display_asset_name(raw_name)} tf={tf_min}",
-                                )
-                            break
+            _diag_not_found(norm_name, source='DIGITAL')
             continue
         real_name, cat = entry
         if real_name.upper() in used:
@@ -3465,8 +3583,9 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
     for norm_name in binaria_lista:
         if len(result) >= max_count:
             break
-        entry = open_map.get(norm_name)
+        entry = _lookup_open_map(norm_name)
         if entry is None:
+            _diag_not_found(norm_name, source='BINARIA')
             continue
         real_name, cat = entry
         if real_name.upper() in used:
@@ -5674,7 +5793,10 @@ if __name__ == '__main__':
     _init_paths_with_tag(auto_tag)
     _ensure_csv_headers()
 
-    # Montar lista de ativos inicial a partir do Ativos.txt
+    # Montar lista de ativos inicial a partir do Ativos.txt.
+    # Tenta até _BOOT_MAX_RETRIES vezes quando a API está instável (retorna None).
+    # Distingue entre "API degradada" (open_time=None) e "ativo fechado/filtrado"
+    # (API respondeu mas nenhum ativo do Ativos.txt passou pelo filtro de mercado).
     print(f"\n🔍 Buscando ativos do Ativos.txt — seções [DIGITAL M{TIMEFRAME_MINUTES}] e [BINARIA M{TIMEFRAME_MINUTES}]...")
     digital_lista_init, binaria_lista_init = load_ativos_por_categoria(TIMEFRAME_MINUTES)
     tf_label_init = f"M{TIMEFRAME_MINUTES}"
@@ -5684,25 +5806,61 @@ if __name__ == '__main__':
             "encontrada no Ativos.txt. Verifique o arquivo."
         )
 
-    # Para M5 com pool dinâmico: seleciona pool inicial por ranking (payout + ATR/ADX).
-    # Para M1 e M5 sem pool dinâmico: usa build_asset_list em ordem do Ativos.txt.
-    if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
-        all_candidates = build_candidate_pool(
-            use_otc=use_otc, limit=200, tf_min=TIMEFRAME_MINUTES,
-            allow_open_market=allow_open_market,
-        )
-        ativos_lista = _startup_rank_m5_pool(all_candidates, pool_size=max_ativos)
-    else:
-        ativos_lista = build_asset_list(
-            use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES,
-            allow_open_market=allow_open_market,
-        )
+    _BOOT_MAX_RETRIES = BOOT_MAX_RETRIES
+    _BOOT_RETRY_SLEEP = BOOT_RETRY_SLEEP_S
+    ativos_lista: List[Tuple[str, str]] = []
+
+    for _boot_attempt in range(_BOOT_MAX_RETRIES):
+        # Para M5 com pool dinâmico: seleciona pool inicial por ranking (payout + ATR/ADX).
+        # Para M1 e M5 sem pool dinâmico: usa build_asset_list em ordem do Ativos.txt.
+        if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
+            all_candidates = build_candidate_pool(
+                use_otc=use_otc, limit=200, tf_min=TIMEFRAME_MINUTES,
+                allow_open_market=allow_open_market,
+            )
+            ativos_lista = _startup_rank_m5_pool(all_candidates, pool_size=max_ativos)
+        else:
+            ativos_lista = build_asset_list(
+                use_otc=use_otc, max_count=max_ativos, tf_min=TIMEFRAME_MINUTES,
+                allow_open_market=allow_open_market,
+            )
+
+        if ativos_lista:
+            break  # Pool montado com sucesso
+
+        # Verifica se a API respondeu: se não, é instabilidade — tenta de novo
+        _ot_probe = _safe_get_all_open_time()
+        if _ot_probe is None:
+            print(
+                cyellow(
+                    f"⚠️  API instável (tentativa {_boot_attempt + 1}/{_BOOT_MAX_RETRIES}). "
+                    f"Aguardando {_BOOT_RETRY_SLEEP:.0f}s antes de tentar novamente..."
+                )
+            )
+            time.sleep(_BOOT_RETRY_SLEEP)
+        else:
+            # API respondeu, mas nenhum ativo do Ativos.txt passou pelo filtro de mercado.
+            # Não adianta repetir — o pool ficará vazio até o mercado abrir ou o usuário
+            # ajustar o Ativos.txt / perfil de mercado. Sai do loop de retentativas.
+            break
 
     if not ativos_lista:
-        print(
-            f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe M{TIMEFRAME_MINUTES} "
-            "escolhido. Aguardando abertura..."
-        )
+        _ot_final = _safe_get_all_open_time()
+        if _ot_final is None:
+            print(
+                cyellow(
+                    f"⚠️  API não respondeu após {_BOOT_MAX_RETRIES} tentativas. "
+                    "O bot irá iniciar monitorando o pool — os ativos serão adicionados "
+                    "automaticamente quando a API estabilizar."
+                )
+            )
+        else:
+            print(
+                f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe "
+                f"M{TIMEFRAME_MINUTES} escolhido. Verifique o Ativos.txt e o perfil "
+                f"de mercado (OTC/OPEN/MISTO). Detalhes em: "
+                f"{BLOCKED_LOG.as_posix() if BLOCKED_LOG else 'logs/blocked_reasons_*.log'}"
+            )
 
     nome = get_profile_name()
 
