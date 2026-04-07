@@ -326,44 +326,57 @@ O ranking completo é exibido no console e gravado em
 
 ## Arquivo Ativos.txt
 
-O arquivo `Ativos.txt` define o universo de ativos que o bot pode operar.
-Os ativos podem ser OTC (`-OTC`), mercado aberto (`-OP`) ou sem sufixo
-(incluídos em qualquer modo).
+O `Ativos.txt` é a **fonte da verdade** do bot: **nenhum ativo é operado sem
+estar listado aqui com o sufixo exato**. Ativos retornados pela API ou pela
+estratégia que não constem na lista são descartados imediatamente, com log
+do motivo (`asset_not_in_ativos_txt`).
+
+### Regras de sufixo (obrigatórias)
+
+| Sufixo | Significado | Exemplo |
+|--------|-------------|---------|
+| `-op` (minúsculo) | Mercado aberto (open market) | `EURUSD-op` |
+| `-OTC` (maiúsculo) | OTC | `EURUSD-OTC` |
+| sem sufixo | Apenas para índices (ver abaixo) | `DXY`, `EXY` |
+
+> ⚠️ **`EURUSD-op` e `EURUSD-OTC` são ativos distintos.** Inclua na lista
+> apenas o(s) que desejar operar. O bot **nunca** converte um sufixo em outro
+> automaticamente — não há fallback entre `-op` e `-OTC`.
 
 O pool misto M5 (padrão) aceita qualquer combinação de ativos listada:
 
 ```
 [DIGITAL M1]
-EURUSD-OP
-EURJPY-OP
-EURGBP-OP
+EURUSD-op
+EURJPY-op
+EURGBP-op
 
 [BINARIA M1]
-EURUSD-OP
-EURJPY-OP
+EURUSD-op
+EURJPY-op
 
 [DIGITAL M5]
-EURUSD-OP
-EURJPY-OP
+EURUSD-op
+EURJPY-op
 AUDCAD-OTC
 USDZAR-OTC
 
 [BINARIA M5]
-EURUSD-OP
+EURUSD-op
 AUDCAD-OTC
 ```
 
 > 📝 Quando `m5_allow_otc=true` e `m5_allow_open_market=true` (padrão), o bot
-> inclui no pool M5 **qualquer** ativo da lista — tanto `-OTC` quanto `-OP`.
+> inclui no pool M5 **qualquer** ativo da lista — tanto `-OTC` quanto `-op`.
 > Quando um ativo é **excluído** por um desses flags, o bot registra a razão
 > em `logs/blocked_reasons_*.log` com o prefixo `market_filter_skip`, por exemplo:
 > - `market_filter_skip [m5_allow_otc=false]` → ativo OTC ignorado porque OTC está desativado
-> - `market_filter_skip [m5_allow_open_market=false]` → ativo -OP ignorado porque mercado aberto está desativado
+> - `market_filter_skip [m5_allow_open_market=false]` → ativo -op ignorado porque mercado aberto está desativado
 
 ### Símbolos de Índice (JXY, EXY, BXY, CXY, AXY, DXY)
 
-Esses seis símbolos não possuem sufixo `-OP` na IQ Option, mas são tratados
-internamente como **ativos de mercado aberto** (equivalentes a `-OP`):
+Esses seis símbolos não possuem sufixo na IQ Option e são tratados
+internamente como **ativos de mercado aberto**:
 
 | Símbolo | Descrição |
 |---------|-----------|
@@ -382,7 +395,7 @@ internamente como **ativos de mercado aberto** (equivalentes a `-OP`):
 | **MISTO** (`m5_allow_otc=true` + `m5_allow_open_market=true`) | ✅ Sim |
 | **OTC-only** (`m5_allow_open_market=false`) | ❌ Não (bloqueado com razão `m5_allow_open_market=false(index)`) |
 
-Liste-os normalmente no `Ativos.txt` sem nenhum sufixo:
+Liste-os normalmente no `Ativos.txt` **sem sufixo**:
 
 ```
 [DIGITAL M5]

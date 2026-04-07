@@ -1,0 +1,37 @@
+# Ativos.txt — lista de ativos permitidos pelo bot.
+#
+# REGRAS DE SUFIXO (obrigatórias):
+#   -op     → mercado aberto (open market), minúsculo
+#   -OTC    → OTC, maiúsculo
+#   sem sufixo → apenas para os índices CXY, AXY, DXY, JXY, EXY, BXY
+#
+# Esta lista é a FONTE DA VERDADE: o bot NUNCA opera um ativo que não
+# esteja listado aqui com o sufixo exato. EURUSD-op e EURUSD-OTC são
+# tratados como ativos distintos — inclua apenas o(s) que desejar operar.
+#
+# Formato das seções: [DIGITAL M1], [BINARIA M1], [DIGITAL M5], [BINARIA M5]
+# Linhas começando com # são comentários e são ignoradas.
+
+[DIGITAL M5]
+EURUSD-op
+EURJPY-op
+GBPUSD-op
+AUDCAD-OTC
+EURCAD-OTC
+JXY
+EXY
+DXY
+
+[BINARIA M5]
+EURUSD-op
+EURJPY-op
+AUDCAD-OTC
+
+[DIGITAL M1]
+EURUSD-op
+EURJPY-op
+GBPUSD-op
+
+[BINARIA M1]
+EURUSD-op
+EURJPY-op

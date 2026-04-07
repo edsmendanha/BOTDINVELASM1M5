@@ -206,6 +206,11 @@ OPEN_MARKET_INDEX_SYMBOLS: frozenset = frozenset({
     "JXY", "EXY", "BXY", "CXY", "AXY", "DXY",
 })
 
+# Conjunto de nomes normalizados permitidos, carregado do Ativos.txt.
+# Atualizado em _reload_allowed_asset_names() durante a inicialização e
+# a cada recarga do pool. Usado por is_allowed_asset() para validação rápida.
+_ALLOWED_ASSET_NAMES: frozenset = frozenset()
+
 PURCHASE_BUFFER_SECONDS = int(config.get('AJUSTES', {}).get('purchase_buffer_seconds', 1))
 
 USE_BUY_THREAD = True
@@ -1377,6 +1382,55 @@ def _strip_market_suffix(name_n: str) -> str:
         if name_n.endswith(sfx):
             return name_n[:-len(sfx)]
     return name_n
+
+
+def _is_otc_name(norm_name: str) -> bool:
+    """Retorna True se o nome normalizado (maiúsculas) representa um ativo OTC.
+
+    Critério: contém '-OTC' no nome.
+    Exemplos:
+        'EURUSD-OTC'     → True
+        'BTCUSD-OTC-OP'  → True   (combinado, OTC prevalece)
+        'GBPUSD-OP'      → False
+        'DXY'            → False   (índice sem sufixo = open market)
+    """
+    return '-OTC' in norm_name
+
+
+def _reload_allowed_asset_names(tf_min: int) -> None:
+    """Recarrega o conjunto global de ativos permitidos a partir do Ativos.txt.
+
+    Deve ser chamado na inicialização e sempre que o Ativos.txt for recarregado.
+    O conjunto _ALLOWED_ASSET_NAMES contém nomes normalizados (maiúsculas, sem espaços)
+    de todas as seções DIGITAL e BINARIA para o timeframe informado.
+    """
+    global _ALLOWED_ASSET_NAMES
+    digital, binaria = load_ativos_por_categoria(tf_min)
+    _ALLOWED_ASSET_NAMES = frozenset(digital + binaria)
+
+
+def is_allowed_asset(asset_name: str) -> bool:
+    """Retorna True se o ativo está explicitamente listado no Ativos.txt.
+
+    A verificação é feita sobre o nome normalizado (maiúsculas, sem espaços).
+    Se _ALLOWED_ASSET_NAMES ainda não foi populado, retorna True (permissivo
+    para não bloquear a inicialização) e emite log de aviso.
+
+    Regra: EURUSD-op e EURUSD-OTC são tratados como ativos distintos.
+    Apenas nomes que constam EXATAMENTE no Ativos.txt (após normalização)
+    são considerados permitidos — sem fallback automático entre sufixos.
+    """
+    if not _ALLOWED_ASSET_NAMES:
+        return True  # Lista ainda não carregada; permissivo durante boot
+    norm = _normalize_asset_name(asset_name)
+    if norm in _ALLOWED_ASSET_NAMES:
+        return True
+    _log_blocked(
+        "asset_not_in_ativos_txt",
+        f"ativo={display_asset_name(asset_name)} norm={norm} "
+        "(descartado: não está na lista do Ativos.txt)",
+    )
+    return False
 
 
 def _categories_priority(preferred_tipo):
@@ -3196,9 +3250,9 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
     Se digital estiver fechado → retorna a variante binária/original.
     Chama a API a cada invocação (não usa cache) para garantir status atualizado.
 
-    use_otc: passa o modo global de OTC — tem precedência sobre o sufixo do ativo.
-    Se use_otc=False (mercado aberto), NUNCA permite variante -OTC mesmo que o
-    ativo original não tenha sufixo, evitando troca silenciosa por OTC.
+    use_otc: deriva do sufixo do ativo (OTC vs open market). A busca de variante
+    digital respeita o tipo de mercado do ativo original: EURUSD-OP nunca migra
+    para EURUSD-OTC e vice-versa, evitando operar ativos fora do Ativos.txt.
     """
     if not PREFER_DIGITAL:
         return ativo, ativo_chave
@@ -3208,10 +3262,12 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
     try:
         # Normalizar base do ativo: usa _strip_market_suffix para lidar corretamente
         # com sufixos combinados como '-OTC-OP' (ex.: 'BTCUSD-OTC-op' da IQ Option).
-        base = _strip_market_suffix(_normalize_asset_name(ativo))
-        # use_otc global tem precedência: só permite OTC se explicitamente habilitado
+        ativo_norm = _normalize_asset_name(ativo)
+        base = _strip_market_suffix(ativo_norm)
+        # Tipo de mercado derivado do sufixo do ativo — NÃO muda durante a busca
+        ativo_is_otc = _is_otc_name(ativo_norm)
         allow_otc = use_otc
-        # Tentar digital primeiro
+        # Tentar digital primeiro, respeitando o tipo de mercado do ativo
         digital_table = ot.get('digital', {})
         if isinstance(digital_table, dict):
             for name, info in digital_table.items():
@@ -3222,15 +3278,25 @@ def resolve_trade_variant(ativo: str, ativo_chave: str, use_otc: bool = False) -
                     continue
                 name_norm = _normalize_asset_name(str(name))
                 name_base = _strip_market_suffix(name_norm)
-                if name_base == base or name_norm == _normalize_asset_name(ativo):
+                # Correspondência exata tem prioridade (sem verificação de mercado)
+                if name_norm == ativo_norm:
                     return str(name), 'digital'
+                # Correspondência por base: requer mesmo tipo de mercado para não
+                # cruzar OTC↔open (ex.: EURUSD-OP não vira EURUSD-OTC e vice-versa)
+                if name_base == base and _is_otc_name(name_norm) == ativo_is_otc:
+                    if is_allowed_asset(str(name)):
+                        return str(name), 'digital'
         # Digital fechado: verificar se binária ainda está aberta
         if _is_open(ot, ativo_chave, ativo):
             return ativo, ativo_chave
-        # Tentar outra variante binária
+        # Tentar outra variante binária (mantém tipo de mercado via allow_otc)
         new_name, new_cat = find_preferred_variant_with_rules(base, allow_otc=allow_otc)
         if new_name and new_cat:
-            return new_name, new_cat
+            # Revalida o tipo de mercado e a presença no Ativos.txt para não cruzar
+            # OTC↔open nem operar ativos fora da lista na busca binária de fallback
+            if (_is_otc_name(_normalize_asset_name(str(new_name))) == ativo_is_otc
+                    and is_allowed_asset(str(new_name))):
+                return new_name, new_cat
     except Exception as exc:
         _log_error("Erro em resolve_trade_variant", exc)
     return ativo, ativo_chave
@@ -3498,20 +3564,28 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         """Busca ativo no open_map com fallback fuzzy por nome base.
 
         1ª tentativa: lookup exato por nome normalizado completo.
-        2ª tentativa (fuzzy): strip de sufixos de ambos os lados e compara raiz.
-          Ex.: 'BTCUSD-OTC' (Ativos.txt) → base 'BTCUSD' → encontra 'BTCUSD-OTC-op' (API).
+        2ª tentativa (fuzzy): strip de sufixos de ambos os lados e compara raiz,
+          MAS somente aceita a correspondência se o tipo de mercado for idêntico
+          (OTC ↔ OTC, open ↔ open). Isso evita que EURUSD-OP (Ativos.txt) seja
+          resolvido como EURUSD-OTC (API) e vice-versa.
+
+          Ex. válido:   'BTCUSD-OTC' → base 'BTCUSD' → 'BTCUSD-OTC-op' (API, OTC ✓)
+          Ex. rejeitado: 'EURUSD-OP'  → base 'EURUSD' → 'EURUSD-OTC' (API, OTC ≠ OP ✗)
 
         Retorna (real_name, categoria) ou None se não encontrado.
         """
         entry = open_map.get(norm_name)
         if entry is not None:
             return entry
-        # Fallback: comparar por nome base sem sufixo
+        # Fallback fuzzy: somente aceita se o tipo de mercado for compatível
         base = _strip_market_suffix(norm_name)
         if base:
             entry = open_map_by_base.get(base)
             if entry is not None:
-                return entry
+                found_is_otc = _is_otc_name(_normalize_asset_name(str(entry[0])))
+                requested_is_otc = _is_otc_name(norm_name)
+                if found_is_otc == requested_is_otc:
+                    return entry
         return None
 
     def _diag_not_found(norm_name: str, source: str) -> None:
@@ -3520,8 +3594,13 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
         Verifica se o ativo existe na tabela de ativos abertos (sem filtro de mercado)
         e informa o motivo pelo qual foi rejeitado: filtro de mercado, fechado, ou
         simplesmente ausente da resposta da API.
+
+        A busca respeita o tipo de mercado (OTC vs open market) para evitar mensagens
+        enganosas — ex.: não reporta 'EURUSD-OTC' como causa de rejeição de 'EURUSD-OP'.
         """
         # Busca o ativo na tabela completa (sem filtro de mercado) para diagnóstico
+        requested_is_otc = _is_otc_name(norm_name)
+        norm_base = _strip_market_suffix(norm_name)
         found_raw: Optional[str] = None
         found_table: Optional[str] = None
         for table_key in ('digital', 'binary'):
@@ -3531,7 +3610,9 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
             for raw_name, info in table.items():
                 raw_norm = _normalize_asset_name(raw_name)
                 raw_base = _strip_market_suffix(raw_norm)
-                if raw_norm == norm_name or raw_base == _strip_market_suffix(norm_name):
+                # Somente considera correspondência se tipo de mercado for idêntico
+                same_market = (_is_otc_name(raw_norm) == requested_is_otc)
+                if raw_norm == norm_name or (raw_base == norm_base and same_market):
                     found_raw = raw_name
                     found_table = table_key
                     reason = _market_filter_skip_reason(str(raw_name).upper())
@@ -5886,6 +5967,9 @@ if __name__ == '__main__':
             f"⚠️  Nenhuma seção [DIGITAL {tf_label_init}] ou [BINARIA {tf_label_init}] "
             "encontrada no Ativos.txt. Verifique o arquivo."
         )
+
+    # Popula o conjunto global de ativos permitidos para is_allowed_asset()
+    _reload_allowed_asset_names(TIMEFRAME_MINUTES)
 
     _BOOT_MAX_RETRIES = BOOT_MAX_RETRIES
     _BOOT_RETRY_SLEEP = BOOT_RETRY_SLEEP_S
