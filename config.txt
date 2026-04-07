@@ -42,13 +42,13 @@ sniper_mode            = false
 # Parâmetros do timeframe M5 (5 minutos).
 max_assets             = 4
 entry_mode             = reversal
-v15_score_min          = 60
+v15_score_min          = 58
 v15_confirm_polls      = 1
-adx_min                = 10.0
+adx_min                = 8.0
 bb_width_min           = 0.00045
 slope_min              = 0.000060
 atr_min_ratio          = 0.000020
-entry_window_seconds   = 25
+entry_window_seconds   = 30
 keltner_enable         = true
 pivot_enable           = true
 sniper_mode            = true
@@ -58,15 +58,15 @@ sniper_window_seconds  = 12
 sniper_antifakeout_extreme = true
 # Pool dinâmico M5: rebalanceia ativos conforme desempenho.
 pool_dynamic_enable           = true
-pool_rebalance_minutes        = 12
-pool_dead_minutes             = 8
+pool_rebalance_minutes        = 18
+pool_dead_minutes             = 12
 pool_swap_max_normal          = 1
 pool_swap_max_dead            = 2
-pool_asset_cooldown_minutes   = 20
+pool_asset_cooldown_minutes   = 35
 pool_score_window_minutes     = 60
 dead_market_donchian_period   = 10
 dead_market_range_ratio_thr   = 0.002
-dead_market_penalty           = 5.0
+dead_market_penalty           = 3.0
 pool_swap_scale_with_universe = true
 pool_swap_universe_divisor    = 8
 pool_swap_max_abs             = 3
@@ -76,33 +76,33 @@ pool_swap_max_abs             = 3
 # Thresholds calibrados para o comportamento típico de ativos OTC.
 m5_allow_otc         = true
 m5_allow_open_market = false
-adx_min              = 10.0
+adx_min              = 8.0
 atr_min_ratio        = 0.000020
 bb_width_min         = 0.00045
 slope_min            = 0.000060
-entry_window_seconds = 25
+entry_window_seconds = 30
 
 [PROFILE_OPEN]
 # Perfil OPEN: apenas mercado aberto (ativos -OP).
 # Thresholds ligeiramente mais altos refletem maior liquidez e spreads menores.
 m5_allow_otc         = false
 m5_allow_open_market = true
-adx_min              = 12.0
+adx_min              = 10.0
 atr_min_ratio        = 0.000025
 bb_width_min         = 0.00050
 slope_min            = 0.000070
-entry_window_seconds = 25
+entry_window_seconds = 30
 
 [PROFILE_MISTO]
 # Perfil MISTO: OTC + Mercado Aberto — pool amplo com os dois tipos.
 # Thresholds intermediários para acomodar ambos os mercados.
 m5_allow_otc         = true
 m5_allow_open_market = true
-adx_min              = 10.0
+adx_min              = 8.0
 atr_min_ratio        = 0.000020
 bb_width_min         = 0.00045
 slope_min            = 0.000060
-entry_window_seconds = 25
+entry_window_seconds = 30
 
 # Nota: Agendamento (Programador) é configurado interativamente no menu de startup.
 # Não requer chaves neste arquivo — o menu pergunta Sim/Não a cada execução.

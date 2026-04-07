@@ -547,14 +547,14 @@ Os arquivos de log ficam na pasta `logs/`:
 ## Estrutura de Evolução (Roadmap)
 
 - ✅ Motor V15 (reversão por score)
-- ✅ Filtros de regime ATR/ADX/BBW/Slope (M1: regra 2-de-4)
+- ✅ Filtros de regime ATR/ADX/BBW/Slope (M1 e M5: regra 2-de-4)
 - ✅ Filtros estruturais M1 (1/3 micro-range) e M5 (extremo 20% do range)
 - ✅ Multi-ativo com re-ranking por regime (M1)
 - ✅ Prioridade digital com fallback para binária
 - ✅ Parâmetros externalizados no config.txt (seções M1 e M5 separadas)
 - ✅ Canal Keltner como score adicional
 - ✅ Pivôs/Fractais (5 barras) para contexto estrutural
-- ✅ Padrões Engolfo Bullish/Bearish e Pinça Top/Bottom
+- ✅ Padrões Engolfo Bullish/Bearish e Pinça Top/Bottom (pesos aumentados: engolfo 20pts, pinça 12pts)
 - ✅ Estratégia Respiro (continuação: impulso → pullback → entrada)
 - ✅ Pool Dinâmico M5: janela móvel de scoring, Donchian dead-market, escalonamento por universo, remoção imediata de asset_closed, novos pesos (pending_timeout, latency_guard, win/loss trade), freeze_skip throttle
 - ✅ M5 pool misto: suporte configurável a OTC + mercado aberto via `m5_allow_otc` / `m5_allow_open_market`; sniper M5 ativo por padrão
@@ -562,11 +562,46 @@ Os arquivos de log ficam na pasta `logs/`:
 - ✅ Seleção inicial de pool M5 por ranking (payout + ATR/ADX health) em vez de ordem do Ativos.txt
 - ✅ OTC em conta real habilitado por padrão (`allow_otc_live = true`); mantido como toggle configurável
 - ✅ Símbolos de índice sem sufixo (JXY, EXY, BXY, CXY, AXY, DXY) tratados como mercado aberto — elegíveis em OPEN e MISTO, excluídos em OTC-only
-- ✅ Watchdog de conexão SAFE/HOLD: detecta late_warnings, NoneType subscriptable, WebSocketConnectionClosedException; backoff exponencial (5s→120s, 10 tentativas); aguarda candle novo por ativo após reconexão
+- ✅ Watchdog de conexão SAFE/HOLD: detecta late_warnings, NoneType subscriptable, WebSocketConnectionClosedException; backoff exponencial (5s→120s, 10 tentativas); aguarda candle novo por ativo após reconexão; retry automático em `_safe_get_all_open_time` (3 tentativas)
 - 🗂️ M15 — estrutura reservada no config.txt, lógica a implementar futuramente
+
+---
+
+## 📊 Assertividade Otimizada (v2026-04-07)
+
+### Ajustes de Filtros M5
+- **ADX_MIN_M5**: 18.0 → 8.0 (aceita mercado menos direcional)
+- **BB_WIDTH_M5**: 0.00070 → 0.00045 (aceita mais compressão)
+- **SLOPE_MIN_M5**: 0.00012 → 0.00006 (aceita mais lateralização)
+- **ENTRY_WINDOW_M5**: 25s → 30s (reduz timeouts)
+
+### Regra 2-de-4 (M1 e M5)
+Permite até **2 filtros abaixo do mínimo** entre ATR, ADX, BBW e SLOPE.
+- **Mais volume** de entradas qualificadas
+- **Mantém qualidade** (não aceita todos sinais)
+
+### Pesos de Padrões (Engolfo/Pinça)
+- **Engolfo (Bullish/Bearish)**: 15 → 20 pts
+- **Pinça (Tweezer Top/Bottom)**: 10 → 12 pts
+
+### Pool Dinâmico Ajustado
+- **Rebalance**: 15min → 18min (ativos têm mais tempo para sinais)
+- **Dead market**: 10min → 12min (mais tolerância)
+- **Cooldown**: 30min → 35min (evita reinclusão rápida)
+- **Dead market penalty**: 5.0 → 3.0 (menos agressivo)
+
+### Conexão Robusta
+- **Late warning threshold**: 3 → 5 (menos sensível a flutuações)
+- **`_safe_get_all_open_time`**: retry automático (3 tentativas com 0.5s entre elas)
+
+### Mercado Aberto vs OTC
+- **-op** (minúsculo) = mercado aberto
+- **-OTC** (maiúsculo) = OTC
+- Bot **nunca troca** entre variantes automaticamente
+- Logs `asset_wrong_market_type` indicam quando pediu OTC mas só tem OP (ou vice-versa)
 
 ---
 
 ## Versão
 
-`2026-04-06-watchdog-index-symbols-v14`
+`2026-04-07-assertividade-otimizada-v15`
