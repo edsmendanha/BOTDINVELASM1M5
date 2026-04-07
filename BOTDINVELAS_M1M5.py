@@ -4088,22 +4088,90 @@ def ask_stop_loss_win():
         print("❌ Valor inválido")
 
 
-def ask_run_duration() -> int:
-    """Pergunta por quantos minutos o bot deve rodar (0 = ilimitado)."""
+def ask_agendamento() -> Optional[float]:
+    """Menu de Agendamento: Programador Sim/Não + modo de agendamento.
+
+    Retorna o timestamp Unix (float) do momento em que o bot deve iniciar,
+    ou None para iniciar imediatamente.
+
+    Modos disponíveis:
+      1) Daqui X minutos — inicia após X minutos a partir de agora.
+      2) Horário exato   — inicia em HH:MM ou HH:MM:SS; se já passou, agenda para o dia seguinte.
+    """
     print("\n" + "=" * 70)
-    print("⏱️  TEMPORIZADOR DE FINALIZAÇÃO")
+    print("📅 AGENDAMENTO")
     print("=" * 70)
-    print("  Defina por quantos minutos o bot deve operar.")
-    print("  0 = sem limite (bot roda até ser interrompido manualmente).")
+    print("  Programador: escolha se quer iniciar imediatamente ou agendar.")
+    print("  Se agendado, a busca de ativos só ocorre quando o contador zerar.")
+    print()
+    print("  1) Não — iniciar imediatamente")
+    print("  2) Sim — agendar horário de início")
+
     while True:
-        raw = input("\n👉 Minutos de operação (0 = ilimitado) [0]: ").strip() or "0"
-        try:
-            v = int(raw)
-            if v >= 0:
-                return v
-        except Exception:
-            pass
-        print("❌ Digite um número inteiro >= 0.")
+        r = input("\n👉 Programador no menu (1=Não / 2=Sim) [1]: ").strip() or "1"
+        if r in ("1", "n", "N"):
+            print("✅ Início imediato selecionado.")
+            return None
+        if r in ("2", "s", "S"):
+            break
+        print("❌ Opção inválida. Digite 1 (Não) ou 2 (Sim).")
+
+    # Modo de agendamento
+    print()
+    print("  Escolha o modo de agendamento:")
+    print("  1) Daqui X minutos")
+    print("  2) Horário exato (HH:MM ou HH:MM:SS)")
+
+    while True:
+        modo = input("\n👉 Modo de agendamento [1]: ").strip() or "1"
+        if modo == "1":
+            # Daqui X minutos
+            while True:
+                raw = input("👉 Daqui quantos minutos? [5]: ").strip() or "5"
+                try:
+                    mins = float(raw)
+                    if mins > 0:
+                        start_ts = get_now_ts() + mins * 60
+                        break
+                except Exception:
+                    pass
+                print("❌ Digite um número maior que zero.")
+            break
+        if modo == "2":
+            # Horário exato
+            while True:
+                raw = input("👉 Horário de início (HH:MM ou HH:MM:SS): ").strip()
+                parts = raw.split(":")
+                try:
+                    if len(parts) == 2:
+                        hh, mm = int(parts[0]), int(parts[1])
+                        ss = 0
+                    elif len(parts) == 3:
+                        hh, mm, ss = int(parts[0]), int(parts[1]), int(parts[2])
+                    else:
+                        raise ValueError
+                    if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+                        raise ValueError
+                    # Calcula timestamp-alvo usando o mesmo dia; se já passou, avança para amanhã
+                    now_ts = get_now_ts()
+                    today = datetime.fromtimestamp(now_ts)
+                    target = today.replace(hour=hh, minute=mm, second=ss, microsecond=0)
+                    target_ts = target.timestamp()
+                    if target_ts <= now_ts:
+                        target_ts += 86400  # próximo dia
+                    start_ts = target_ts
+                    break
+                except (ValueError, IndexError):
+                    print("❌ Formato inválido. Use HH:MM ou HH:MM:SS (ex: 14:30 ou 02:15:00).")
+            break
+        print("❌ Opção inválida. Digite 1 ou 2.")
+
+    # Exibe confirmação com hora de início e segundos restantes
+    inicio_fmt = datetime.fromtimestamp(start_ts).strftime("%H:%M:%S")
+    secs_restantes = int(start_ts - get_now_ts())
+    print(f"\n✅ Bot agendado para iniciar às {inicio_fmt} (em {secs_restantes}s).")
+    print(f"   ⏳ Aguardando... (pressione Ctrl+C para cancelar)\n")
+    return float(start_ts)
 
 
 def ask_max_entries() -> int:
@@ -5764,8 +5832,8 @@ if __name__ == '__main__':
     # Valor por operação
     ask_amount_menu()
 
-    # Temporizador de finalização automática
-    run_minutes = ask_run_duration()
+    # Agendamento de início (Programador Sim/Não)
+    agendamento_ts = ask_agendamento()
 
     # Modo de entrada (reversal / continuation)
     # O menu interativo sobrescreve os defaults do config.txt para a sessão atual.
@@ -5792,6 +5860,19 @@ if __name__ == '__main__':
     auto_tag = f"m{TIMEFRAME_MINUTES}_{market_tag}_{max_ativos}ativos"
     _init_paths_with_tag(auto_tag)
     _ensure_csv_headers()
+
+    # Agendamento: aguarda countdown antes de buscar ativos (conforme solicitado pelo usuário)
+    if agendamento_ts is not None:
+        while True:
+            secs_left = int(agendamento_ts - get_now_ts())
+            if secs_left <= 0:
+                break
+            inicio_fmt = datetime.fromtimestamp(agendamento_ts).strftime("%H:%M:%S")
+            print(f"\r⏳ Bot inicia às {inicio_fmt} — faltam {secs_left}s...   ", end="", flush=True)
+            time.sleep(1)
+        print()  # nova linha após o countdown
+        inicio_real = datetime.fromtimestamp(agendamento_ts).strftime("%H:%M:%S")
+        print(f"🚀 Agendamento concluído — iniciando às {inicio_real}!")
 
     # Montar lista de ativos inicial a partir do Ativos.txt.
     # Tenta até _BOOT_MAX_RETRIES vezes quando a API está instável (retorna None).
@@ -5892,9 +5973,9 @@ if __name__ == '__main__':
     else:
         print(f'Valor por operação: {AMOUNT_PERCENT:.2f}% do saldo')
     print(f'StopLoss: {STOP_LOSS_PCT:.2f}% | StopWin: {STOP_WIN_PCT:.2f}%')
-    timer_label = f"{run_minutes} min" if run_minutes > 0 else "ilimitado"
+    agendamento_label = "imediato" if agendamento_ts is None else datetime.fromtimestamp(agendamento_ts).strftime("%H:%M:%S")
     entries_label = str(MAX_ENTRIES) if MAX_ENTRIES > 0 else "ilimitado"
-    print(f'Temporizador: {timer_label} | Entradas máx: {entries_label}')
+    print(f'Agendamento: {agendamento_label} | Entradas máx: {entries_label}')
     _sm1 = V15_SCORE_MIN_M1
     _sm5 = V15_SCORE_MIN_M5
     print(f'V15_SCORE_MIN: M1={_sm1} M5={_sm5} | V15_CONFIRM_POLLS: M1={V15_CONFIRM_POLLS_M1} M5={V15_CONFIRM_POLLS_M5}')
@@ -5948,7 +6029,7 @@ if __name__ == '__main__':
             max_ativos=max_ativos,
             use_otc=use_otc,
             allow_open_market=allow_open_market,
-            run_minutes=run_minutes,
+            run_minutes=0,  # Duração ilimitada — o Agendamento controla apenas o horário de início
             max_entries=MAX_ENTRIES,
         )
     except KeyboardInterrupt:
