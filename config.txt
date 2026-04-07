@@ -1,23 +1,106 @@
-# Full Config
+# Full Config — Bot DINVELAS M1/M5
+# Edite este arquivo para personalizar o comportamento do bot.
+# Seções e chaves ausentes usam os defaults do código (retrocompatível).
 
 [LOGIN]
 email = emailaqui
 senha = senhaaqui
 
+[AJUSTES]
+# Tipo padrão de mercado quando não determinado por outro contexto.
+# Valores: digital | binary
+tipo = digital
+# Margem de tempo (segundos) antes do fechamento da vela para aceitar entrada.
+purchase_buffer_seconds = 1
+
 [MARKET]
-m5_allow_otc = false
-m5_allow_open_market = true
+# Flags de mercado — sobrescritas pelo menu interativo a cada sessão.
+# allow_otc_live: true = permite OTC em conta real; false = bloqueia e exige demo.
 allow_otc_live = true
+# Defaults de habilitação de mercado para M5 (sobrescritos pelo perfil selecionado no menu).
+# OTC 24/7: m5_allow_otc = true  | Mercado aberto (-OP): m5_allow_open_market = true
+m5_allow_otc = true
+m5_allow_open_market = false
 
-[PROFILE_1]
-# additional profile settings
-...  
+[M1]
+# Parâmetros do timeframe M1 (1 minuto).
+# Todos os valores abaixo sobrescrevem os defaults hardcoded do bot.
+max_assets             = 2
+entry_mode             = reversal
+v15_score_min          = 55
+v15_confirm_polls      = 1
+adx_min                = 3.0
+bb_width_min           = 0.00003
+slope_min              = 0.000003
+atr_min_ratio          = 0.000002
+entry_window_seconds   = 30
+keltner_enable         = true
+pivot_enable           = true
+sniper_mode            = false
 
-[PROFILE_2]
-# additional profile settings
-...  
+[M5]
+# Parâmetros do timeframe M5 (5 minutos).
+max_assets             = 4
+entry_mode             = reversal
+v15_score_min          = 60
+v15_confirm_polls      = 1
+adx_min                = 10.0
+bb_width_min           = 0.00045
+slope_min              = 0.000060
+atr_min_ratio          = 0.000020
+entry_window_seconds   = 25
+keltner_enable         = true
+pivot_enable           = true
+sniper_mode            = true
+arm_score_min          = 65
+fallback_arm_score_min = 58
+sniper_window_seconds  = 12
+sniper_antifakeout_extreme = true
+# Pool dinâmico M5: rebalanceia ativos conforme desempenho.
+pool_dynamic_enable           = true
+pool_rebalance_minutes        = 12
+pool_dead_minutes             = 8
+pool_swap_max_normal          = 1
+pool_swap_max_dead            = 2
+pool_asset_cooldown_minutes   = 20
+pool_score_window_minutes     = 60
+dead_market_donchian_period   = 10
+dead_market_range_ratio_thr   = 0.002
+dead_market_penalty           = 5.0
+pool_swap_scale_with_universe = true
+pool_swap_universe_divisor    = 8
+pool_swap_max_abs             = 3
 
-[PROFILE_3]
-# additional profile settings
-...  
+[PROFILE_OTC]
+# Perfil OTC: apenas ativos OTC (24/7).
+# Thresholds calibrados para o comportamento típico de ativos OTC.
+m5_allow_otc         = true
+m5_allow_open_market = false
+adx_min              = 10.0
+atr_min_ratio        = 0.000020
+bb_width_min         = 0.00045
+slope_min            = 0.000060
+entry_window_seconds = 25
+
+[PROFILE_OPEN]
+# Perfil OPEN: apenas mercado aberto (ativos -OP).
+# Thresholds ligeiramente mais altos refletem maior liquidez e spreads menores.
+m5_allow_otc         = false
+m5_allow_open_market = true
+adx_min              = 12.0
+atr_min_ratio        = 0.000025
+bb_width_min         = 0.00050
+slope_min            = 0.000070
+entry_window_seconds = 25
+
+[PROFILE_MISTO]
+# Perfil MISTO: OTC + Mercado Aberto — pool amplo com os dois tipos.
+# Thresholds intermediários para acomodar ambos os mercados.
+m5_allow_otc         = true
+m5_allow_open_market = true
+adx_min              = 10.0
+atr_min_ratio        = 0.000020
+bb_width_min         = 0.00045
+slope_min            = 0.000060
+entry_window_seconds = 25
 
