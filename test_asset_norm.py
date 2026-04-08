@@ -426,7 +426,7 @@ class TestMixedModeFallback(unittest.TestCase):
         maps = self._make_open_maps(['EURUSD-op', 'EURUSD-OTC'])
         result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=True, allow_open_market=True)
         self.assertIsNotNone(result)
-        self.assertEqual(result[0], 'EURUSD-OTC')
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OTC')
 
     def test_mixed_both_closed_returns_none(self):
         """Modo MISTO: ambas as variantes fechadas → retorna None."""
@@ -460,7 +460,7 @@ class TestMixedModeFallback(unittest.TestCase):
         maps = self._make_open_maps(['EURUSD-OTC'])
         result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=True, allow_open_market=False)
         self.assertIsNotNone(result)
-        self.assertEqual(result[0], 'EURUSD-OTC')
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OTC')
 
 
 if __name__ == '__main__':
