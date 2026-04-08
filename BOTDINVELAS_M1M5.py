@@ -3568,11 +3568,22 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
           por simples coincidência de base ('EURUSD'), eliminando a substituição
           silenciosa entre variantes de mercado aberto e OTC.
 
+        3ª tentativa (fallback MISTO — somente quando use_otc E allow_open_market):
+          Quando o perfil é MISTO e a variante pedida está fechada, faz fallback
+          automático para a outra variante disponível:
+          - '-op' fechado  → tenta '-OTC' (se estiver aberto)
+          - '-OTC' fechado → tenta '-op' (se estiver aberta)
+          Emite log 'asset_fallback_variant' quando o fallback é acionado, para
+          rastreabilidade no blocked_reasons log.
+
         Loga 'api_symbol_normalized' quando o fallback fuzzy é usado com sucesso.
-        Loga 'asset_wrong_market_type' quando a variante errada existe mas a certa não.
+        Loga 'asset_wrong_market_type' quando a variante errada existe mas a certa não
+          e o perfil NÃO é misto (sem fallback possível).
 
         Retorna (real_name, categoria) ou None se não encontrado.
         """
+        _mixed_mode = use_otc and allow_open_market
+
         # Normaliza o nome pedido para chave uppercase (independente do sufixo canônico)
         key = _normalize_asset_name(norm_name)
         entry = open_map.get(key)
@@ -3592,7 +3603,16 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
                     norm_name, entry[0], base,
                 )
                 return entry
-            # Rejeição explícita: variante OTC não disponível, mas OP existe
+            # Perfil MISTO: fallback automático para variante -op quando -OTC está fechado
+            if _mixed_mode:
+                op_entry = open_map_by_base_op.get(base)
+                if op_entry is not None:
+                    logging.info(
+                        "asset_fallback_variant | requested=%s using=%s base=%s fallback=op_variant tf=%s",
+                        norm_name, op_entry[0], base, tf_min,
+                    )
+                    return op_entry
+            # Rejeição explícita (modo não-misto): variante OTC não disponível, mas OP existe
             if open_map_by_base_op.get(base):
                 _log_blocked(
                     "asset_wrong_market_type",
@@ -3607,7 +3627,16 @@ def build_asset_list(use_otc: bool, max_count: int, tf_min: int = 0,
                     norm_name, entry[0], base,
                 )
                 return entry
-            # Rejeição explícita: variante OP não disponível, mas OTC existe
+            # Perfil MISTO: fallback automático para variante -OTC quando -op está fechado
+            if _mixed_mode:
+                otc_entry = open_map_by_base_otc.get(base)
+                if otc_entry is not None:
+                    logging.info(
+                        "asset_fallback_variant | requested=%s using=%s base=%s fallback=otc_variant tf=%s",
+                        norm_name, otc_entry[0], base, tf_min,
+                    )
+                    return otc_entry
+            # Rejeição explícita (modo não-misto): variante OP não disponível, mas OTC existe
             if open_map_by_base_otc.get(base):
                 _log_blocked(
                     "asset_wrong_market_type",
