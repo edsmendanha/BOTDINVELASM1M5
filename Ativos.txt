@@ -1,0 +1,102 @@
+# Ativos.txt — Universo de ativos do BOTDINVELAS M1/M5
+# =====================================================
+# Formato das seções: [DIGITAL M1], [BINARIA M1], [DIGITAL M5], [BINARIA M5]
+# Sufixos canônicos:
+#   Mercado Aberto → -op  (minúsculo)
+#   OTC (24/7)     → -OTC (maiúsculo)
+# Linhas em branco e linhas que começam com # são ignoradas.
+# O bot nunca negocia ativos fora desta lista.
+#
+# Dica: comente ou remova ativos que não deseja operar.
+# =====================================================
+
+[DIGITAL M1]
+EURUSD-op
+EURJPY-op
+EURGBP-op
+GBPUSD-op
+USDJPY-op
+AUDUSD-op
+USDCHF-op
+USDCAD-op
+NZDUSD-op
+GBPJPY-op
+EURUSD-OTC
+EURJPY-OTC
+EURGBP-OTC
+GBPUSD-OTC
+USDJPY-OTC
+AUDUSD-OTC
+USDCHF-OTC
+USDCAD-OTC
+NZDUSD-OTC
+GBPJPY-OTC
+AUDCAD-OTC
+AUDNZD-OTC
+CADJPY-OTC
+NZDCAD-OTC
+
+[BINARIA M1]
+EURUSD-op
+EURJPY-op
+GBPUSD-op
+USDJPY-op
+AUDUSD-op
+EURUSD-OTC
+EURJPY-OTC
+EURGBP-OTC
+GBPUSD-OTC
+USDJPY-OTC
+AUDUSD-OTC
+USDCAD-OTC
+
+[DIGITAL M5]
+EURUSD-op
+EURJPY-op
+EURGBP-op
+GBPUSD-op
+USDJPY-op
+AUDUSD-op
+USDCHF-op
+USDCAD-op
+NZDUSD-op
+GBPJPY-op
+EURCAD-op
+EURCHF-op
+GBPCHF-op
+AUDJPY-op
+EURUSD-OTC
+EURJPY-OTC
+EURGBP-OTC
+GBPUSD-OTC
+USDJPY-OTC
+AUDUSD-OTC
+USDCHF-OTC
+USDCAD-OTC
+NZDUSD-OTC
+GBPJPY-OTC
+AUDCAD-OTC
+AUDNZD-OTC
+CADJPY-OTC
+NZDCAD-OTC
+EURCHF-OTC
+GBPCHF-OTC
+AUDJPY-OTC
+EURCAD-OTC
+
+[BINARIA M5]
+EURUSD-op
+EURJPY-op
+GBPUSD-op
+USDJPY-op
+AUDUSD-op
+USDCAD-op
+EURUSD-OTC
+EURJPY-OTC
+EURGBP-OTC
+GBPUSD-OTC
+USDJPY-OTC
+AUDUSD-OTC
+USDCAD-OTC
+AUDCAD-OTC
+NZDUSD-OTC
