@@ -588,8 +588,8 @@ def _load_from_config() -> None:
         globals()[sg_key] = _cfgget(sec, 'v15_score_gap_min', globals()[sg_key], int)
         globals()[cp_key] = _cfgget(sec, 'v15_confirm_polls', globals()[cp_key], int)
 
-        # V15 shared params — loaded from both [M1] and [M5] sections (M5 loaded last,
-        # so M5 values overwrite M1 values for RSI_PERIOD, BB_PERIOD, etc.).
+        # V15 shared params — loaded from both [M15] and [M5] sections (M5 loaded last,
+        # so M5 values overwrite M15 values for RSI_PERIOD, BB_PERIOD, etc.).
         # These calibration values are typically the same for both TFs; per-TF score/gap/polls
         # use dedicated globals (V15_SCORE_MIN_M15/M5, etc.) and are not overwritten here.
         globals()['V15_RSI_PERIOD'] = _cfgget(sec, 'v15_rsi_period', V15_RSI_PERIOD, int)
@@ -700,7 +700,9 @@ def _load_from_config() -> None:
     _load_tf('M15')
     _load_tf('M5')
 
-    # Re-sync shared V15 global (keep backward compat: V15_SCORE_MIN stays as M15 default)
+    # Re-sync shared V15 global: V15_SCORE_MIN mirrors M15 default after load.
+    # V15_SCORE_MIN is used as a legacy fallback in single-asset loop_patterns().
+    # M5 and M15 each have dedicated V15_SCORE_MIN_M5/M15 that take precedence.
     globals()['V15_SCORE_MIN'] = globals()['V15_SCORE_MIN_M15']
     globals()['V15_SCORE_GAP_MIN'] = globals()['V15_SCORE_GAP_MIN_M15']
     globals()['V15_CONFIRM_POLLS'] = globals()['V15_CONFIRM_POLLS_M15']
@@ -1245,7 +1247,7 @@ def report_websocket_closed() -> None:
 def _ensure_connected() -> bool:
     """Verifica a conexão com a IQ Option e reconecta se necessário.
 
-    Para evitar overhead em loops rápidos (M5: ~1.5s/iteração), a verificação
+    Para evitar overhead em loops (M5: ~1.5s/iteração; M15: ~3.0s/iteração), a verificação
     de check_connect() é executada no máximo a cada _RECONNECT_CHECK_INTERVAL_S
     segundos, exceto quando _SAFE_HOLD_MODE está ativo (verifica imediatamente).
 
@@ -4555,7 +4557,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
     global pending, pending_id_active, pending_lock_until_ts, _last_pending_status_printed_for_id
 
     period = tf_min * 60
-    expiration = 1 if tf_min == 15 else 5
+    expiration = 15 if tf_min == 15 else 5
 
     # Aguardar horário agendado
     if start_timestamp is not None and start_timestamp > time.time():
@@ -5703,7 +5705,7 @@ def loop_patterns_multi(
 
         # Best-signal selection: when multiple signals are confirmed simultaneously in M5,
         # choose the ONE with the highest V15 score (tiebreak: fewest seconds into candle).
-        # For M15 (slower TF) all confirmed signals are allowed (max 2 assets anyway).
+        # For M15 (slower TF) all confirmed signals are allowed (max 3 assets per MAX_ASSETS_M15).
         if confirmed_this_cycle:
             if tf_min == 5 and len(confirmed_this_cycle) > 1:
                 # Sort: highest v15_score first, then lowest sec_in_candle (closest to open)
