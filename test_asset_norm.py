@@ -9,6 +9,9 @@ Verifica:
   4. Sem substituição silenciosa: lookup por base respeita o tipo de mercado pedido.
   5. build_asset_list() via mocks leves — garante que 'EURUSD-op' não retorna
      'EURUSD-OTC' quando apenas o OTC está disponível na API.
+  6. Fallback automático em modo MISTO — quando a variante pedida está fechada
+     e o perfil tem use_otc=True e allow_open_market=True, o lookup retorna a
+     variante disponível em vez de retornar None.
 """
 
 import importlib
@@ -319,6 +322,145 @@ class TestNoSilentSubstitution(unittest.TestCase):
         result = self._lookup(canonical, *maps)
         self.assertIsNotNone(result)
         self.assertEqual(result[0], 'GBPUSD-op')
+
+
+# ---------------------------------------------------------------------------
+# 5. Fallback automático em modo MISTO (use_otc=True AND allow_open_market=True)
+# ---------------------------------------------------------------------------
+
+
+class TestMixedModeFallback(unittest.TestCase):
+    """Verifica que o perfil MISTO faz fallback automático entre -op e -OTC.
+
+    Quando use_otc=True AND allow_open_market=True (perfil MISTO):
+    - '-op'  fechado → retorna variante -OTC se disponível (em vez de None)
+    - '-OTC' fechado → retorna variante -op  se disponível (em vez de None)
+
+    Quando o perfil é estrito (OTC-only ou OPEN-only):
+    - O comportamento anterior é mantido (sem fallback, retorna None).
+    """
+
+    def _make_open_maps(self, api_assets):
+        """Constrói os quatro índices open_map / by_base_* a partir de uma lista de nomes."""
+        open_map = {}
+        open_map_by_base_otc = {}
+        open_map_by_base_op = {}
+        open_map_by_base = {}
+        for name in api_assets:
+            norm = _normalize_asset_name(name)
+            if norm not in open_map:
+                open_map[norm] = (name, 'digital')
+            base = _strip_market_suffix(norm)
+            if norm.endswith('-OTC') or norm.endswith('-OTC-OP'):
+                if base not in open_map_by_base_otc:
+                    open_map_by_base_otc[base] = (name, 'digital')
+            elif norm.endswith('-OP'):
+                if base not in open_map_by_base_op:
+                    open_map_by_base_op[base] = (name, 'digital')
+            else:
+                if base not in open_map_by_base:
+                    open_map_by_base[base] = (name, 'digital')
+        return open_map, open_map_by_base_otc, open_map_by_base_op, open_map_by_base
+
+    def _lookup_with_fallback(
+        self, norm_name, open_map, open_map_by_base_otc, open_map_by_base_op, open_map_by_base,
+        use_otc=False, allow_open_market=False
+    ):
+        """Replica a lógica de _lookup_open_map() com fallback MISTO."""
+        _mixed_mode = use_otc and allow_open_market
+        key = _normalize_asset_name(norm_name)
+        entry = open_map.get(key)
+        if entry is not None:
+            return entry
+        base = _strip_market_suffix(key)
+        if not base:
+            return None
+        if key.endswith('-OTC'):
+            entry = open_map_by_base_otc.get(base)
+            if entry is not None:
+                return entry
+            if _mixed_mode:
+                op_entry = open_map_by_base_op.get(base)
+                if op_entry is not None:
+                    return op_entry
+        elif key.endswith('-OP'):
+            entry = open_map_by_base_op.get(base)
+            if entry is not None:
+                return entry
+            if _mixed_mode:
+                otc_entry = open_map_by_base_otc.get(base)
+                if otc_entry is not None:
+                    return otc_entry
+        else:
+            entry = open_map_by_base.get(base)
+            if entry is not None:
+                return entry
+        return None
+
+    # --- Modo MISTO: fallback esperado ---
+
+    def test_mixed_op_falls_back_to_otc(self):
+        """Modo MISTO: '-op' fechado → retorna '-OTC' disponível."""
+        maps = self._make_open_maps(['EURUSD-OTC'])  # apenas OTC aberto
+        result = self._lookup_with_fallback('EURUSD-op', *maps, use_otc=True, allow_open_market=True)
+        self.assertIsNotNone(result, "Fallback MISTO deve retornar variante -OTC")
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OTC')
+
+    def test_mixed_otc_falls_back_to_op(self):
+        """Modo MISTO: '-OTC' fechado → retorna '-op' disponível."""
+        maps = self._make_open_maps(['EURUSD-op'])  # apenas -op aberto
+        result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=True, allow_open_market=True)
+        self.assertIsNotNone(result, "Fallback MISTO deve retornar variante -op")
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OP')
+
+    def test_mixed_op_primary_preferred_over_fallback(self):
+        """Modo MISTO: '-op' aberto → retorna '-op' (não usa fallback)."""
+        maps = self._make_open_maps(['EURUSD-op', 'EURUSD-OTC'])
+        result = self._lookup_with_fallback('EURUSD-op', *maps, use_otc=True, allow_open_market=True)
+        self.assertIsNotNone(result)
+        # Deve retornar a variante OP (primária), não OTC
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OP')
+
+    def test_mixed_otc_primary_preferred_over_fallback(self):
+        """Modo MISTO: '-OTC' aberto → retorna '-OTC' (não usa fallback)."""
+        maps = self._make_open_maps(['EURUSD-op', 'EURUSD-OTC'])
+        result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=True, allow_open_market=True)
+        self.assertIsNotNone(result)
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OTC')
+
+    def test_mixed_both_closed_returns_none(self):
+        """Modo MISTO: ambas as variantes fechadas → retorna None."""
+        maps = self._make_open_maps([])  # nenhum ativo aberto
+        result = self._lookup_with_fallback('EURUSD-op', *maps, use_otc=True, allow_open_market=True)
+        self.assertIsNone(result)
+
+    # --- Modos estritos: SEM fallback ---
+
+    def test_strict_otc_only_no_fallback(self):
+        """Modo OTC-only (use_otc=True, allow_open_market=False): '-op' não cai em -OTC."""
+        maps = self._make_open_maps(['EURUSD-OTC'])
+        result = self._lookup_with_fallback('EURUSD-op', *maps, use_otc=True, allow_open_market=False)
+        self.assertIsNone(result, "Modo OTC-only não deve fazer fallback para -OTC")
+
+    def test_strict_open_only_no_fallback(self):
+        """Modo OPEN-only (use_otc=False, allow_open_market=True): '-OTC' não cai em -op."""
+        maps = self._make_open_maps(['EURUSD-op'])
+        result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=False, allow_open_market=True)
+        self.assertIsNone(result, "Modo OPEN-only não deve fazer fallback para -op")
+
+    def test_strict_op_found_without_fallback(self):
+        """Modo OPEN-only: '-op' encontrado diretamente (sem precisar de fallback)."""
+        maps = self._make_open_maps(['EURUSD-op'])
+        result = self._lookup_with_fallback('EURUSD-op', *maps, use_otc=False, allow_open_market=True)
+        self.assertIsNotNone(result)
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OP')
+
+    def test_strict_otc_found_without_fallback(self):
+        """Modo OTC-only: '-OTC' encontrado diretamente (sem precisar de fallback)."""
+        maps = self._make_open_maps(['EURUSD-OTC'])
+        result = self._lookup_with_fallback('EURUSD-OTC', *maps, use_otc=True, allow_open_market=False)
+        self.assertIsNotNone(result)
+        self.assertEqual(_normalize_asset_name(result[0]), 'EURUSD-OTC')
 
 
 if __name__ == '__main__':
