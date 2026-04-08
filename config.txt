@@ -35,11 +35,12 @@ atr_min_ratio          = 0.000020
 entry_window_seconds   = 30
 keltner_enable         = true
 pivot_enable           = true
-sniper_mode            = true
-arm_score_min          = 65
-fallback_arm_score_min = 58
-sniper_window_seconds  = 12
-sniper_antifakeout_extreme = true
+# Sniper desabilitado — M5 opera em modo normal de confirmação.
+sniper_mode            = false
+# arm_score_min          = 65       ← só relevante quando sniper_mode = true
+# fallback_arm_score_min = 58       ← só relevante quando sniper_mode = true
+# sniper_window_seconds  = 12       ← só relevante quando sniper_mode = true
+# sniper_antifakeout_extreme = true ← só relevante quando sniper_mode = true
 # Pool dinâmico M5: rebalanceia ativos conforme desempenho.
 pool_dynamic_enable           = true
 pool_rebalance_minutes        = 18
