@@ -1,4 +1,4 @@
-# Full Config — Bot DINVELAS M1/M5
+# Full Config — Bot DINVELAS M5/M15
 # Edite este arquivo para personalizar o comportamento do bot.
 # Seções e chaves ausentes usam os defaults do código (retrocompatível).
 
@@ -17,29 +17,13 @@ purchase_buffer_seconds = 1
 # Flags de mercado — sobrescritas pelo menu interativo a cada sessão.
 # allow_otc_live: true = permite OTC em conta real; false = bloqueia e exige demo.
 allow_otc_live = true
-# Defaults de habilitação de mercado para M5 (sobrescritos pelo perfil selecionado no menu).
+# Defaults de habilitação de mercado para M5/M15 (sobrescritos pelo perfil selecionado no menu).
 # OTC 24/7: m5_allow_otc = true  | Mercado aberto (-OP): m5_allow_open_market = true
 m5_allow_otc = true
 m5_allow_open_market = false
 
-[M1]
-# Parâmetros do timeframe M1 (1 minuto).
-# Todos os valores abaixo sobrescrevem os defaults hardcoded do bot.
-max_assets             = 2
-entry_mode             = reversal
-v15_score_min          = 55
-v15_confirm_polls      = 1
-adx_min                = 3.0
-bb_width_min           = 0.00003
-slope_min              = 0.000003
-atr_min_ratio          = 0.000002
-entry_window_seconds   = 30
-keltner_enable         = true
-pivot_enable           = true
-sniper_mode            = false
-
 [M5]
-# Parâmetros do timeframe M5 (5 minutos).
+# Parâmetros do timeframe M5 (5 minutos) — timeframe principal de entrada.
 max_assets             = 4
 entry_mode             = reversal
 v15_score_min          = 58
@@ -70,6 +54,32 @@ dead_market_penalty           = 3.0
 pool_swap_scale_with_universe = true
 pool_swap_universe_divisor    = 8
 pool_swap_max_abs             = 3
+# Filtro M15 para entradas M5: verifica tendência M15 antes de aceitar sinal M5.
+# m15_context_filter_enable = false     ← ative para filtro direcional M15→M5
+# m15_context_lookback_candles = 5      ← velas M15 para avaliar tendência
+
+[M15]
+# Parâmetros do timeframe M15 (15 minutos) — timeframe de contexto e entrada lenta.
+# M15 como filtro de tendência para M5: use [M5] m15_context_filter_enable = true.
+# M15 standalone: escolha "2) M15" no menu de timeframe para operar direto em M15.
+max_assets             = 3
+entry_mode             = reversal
+v15_score_min          = 60
+v15_confirm_polls      = 1
+adx_min                = 12.0
+bb_width_min           = 0.00120
+slope_min              = 0.000150
+atr_min_ratio          = 0.000060
+atr_max_thr            = 0.00300
+entry_window_seconds   = 60
+keltner_enable         = true
+pivot_enable           = true
+sniper_mode            = false
+arm_score_min          = 65
+fallback_arm_score_min = 60
+sniper_window_seconds  = 20
+sniper_antifakeout_extreme = false
+m15_structural_candles = 5
 
 [PROFILE_OTC]
 # Perfil OTC: apenas ativos OTC (24/7).

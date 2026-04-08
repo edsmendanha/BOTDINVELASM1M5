@@ -18,7 +18,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from configobj import ConfigObj
 from iqoptionapi.stable_api import IQ_Option
 
-BOTDIN_VERSION = "2026-04-07-canonical-asset-suffix-v15"
+BOTDIN_VERSION = "2026-04-08-m5-m15-architecture-v16"
 
 # =========================
 # ANSI COLOR HELPERS
@@ -90,9 +90,9 @@ def _cfgbool(section: str, key: str, default: bool) -> bool:
 
 DEBUG = True
 
-IDLE_SLEEP_S_M1 = 0.20
+IDLE_SLEEP_S_M15 = 3.00
 IDLE_SLEEP_S_M5 = 1.50
-PENDING_SLEEP_S_M1 = 0.25
+PENDING_SLEEP_S_M15 = 2.00
 PENDING_SLEEP_S_M5 = 1.10
 PENDING_PRINT_THROTTLE_S = 12.0
 PENDING_FREEZE_SECONDS_M5: float = 6.0    # Duration of M5 freeze window (seconds); 0 = disabled
@@ -218,7 +218,7 @@ CANDLES_LOOKBACK = 120
 MIN_CANDLES_REQUIRED = 80
 
 ENTRY_MODE = "reversal"
-TIMEFRAME_MINUTES = 1
+TIMEFRAME_MINUTES = 5  # Padrão: M5 (timeframe principal)
 PENDING_EXPIRE_CANDLES = 2
 
 # =====================================================================
@@ -227,36 +227,36 @@ PENDING_EXPIRE_CANDLES = 2
 # Todos os parâmetros que impactam volume de entradas estão centralizados
 # neste bloco. Altere SOMENTE aqui; o restante do código lê estas variáveis.
 #
-# Regra de qualidade M1: "2-de-4" — permite até 2 filtros abaixo do mínimo
+# Regra de qualidade M15: "2-de-4" — permite até 2 filtros abaixo do mínimo
 # entre ATR, ADX, BBW e SLOPE. Aumenta volume sem abrir mão de todo critério.
-# Para tornar mais rígido: diminua os valores abaixo (ex.: SLOPE 0.00003 → 0.00005).
-# Para tornar mais livre:  aumente ENTRY_WINDOW ou diminua V15_SCORE_MIN ainda mais.
+# Para tornar mais rígido: diminua os valores abaixo (ex.: SLOPE → aumente).
+# Para tornar mais livre:  aumente ENTRY_WINDOW ou diminua V15_SCORE_MIN.
 # =====================================================================
 
 ENABLE_ATR_FILTER = True
 ATR_PERIOD = 14
 ATR_ADAPTIVE_WINDOW = 30
-ATR_ADAPTIVE_FACTOR = 0.45        # Fator adaptativo para M1 (menos pressão no thr)
-ATR_MAX_THR_M1 = 0.00014          # Cap do threshold ATR adaptativo para M1 (teto dinâmico)
+ATR_ADAPTIVE_FACTOR = 0.45        # Fator adaptativo (menos pressão no thr)
+ATR_MAX_THR_M15 = 0.00300          # Cap do threshold ATR adaptativo para M15 (teto dinâmico)
 ATR_MAX_THR_M5 = 0.00100          # Cap do threshold ATR adaptativo para M5 (teto dinâmico)
-ATR_MIN_RATIO_ABS_M1 = 0.000002   # ← AJUSTE: volatilidade mínima M1 (0.000010 = livre)
+ATR_MIN_RATIO_ABS_M15 = 0.000060   # ← AJUSTE: volatilidade mínima M15 (3× M5; candle maior)
 ATR_MIN_RATIO_ABS_M5 = 0.000020
-ATR_RATIO_QUEUE_M1 = deque(maxlen=ATR_ADAPTIVE_WINDOW)
+ATR_RATIO_QUEUE_M15 = deque(maxlen=ATR_ADAPTIVE_WINDOW)
 ATR_RATIO_QUEUE_M5 = deque(maxlen=ATR_ADAPTIVE_WINDOW)
 
 ENABLE_TREND_STRENGTH_FILTER = True
 ADX_PERIOD = 14
-ADX_MIN_M1 = 3                 # ← AJUSTE: ADX mínimo M1 (10.5 = aceita mercado fraco)
+ADX_MIN_M15 = 12.0               # ← AJUSTE: ADX mínimo M15 (candle lento; exige tendência clara)
 ADX_MIN_M5 = 8.0
 BB_PERIOD = 20
 BB_STD = 2.0
-BB_WIDTH_MIN_M1 = 0.00003         # ← AJUSTE: BB width mínimo M1 (0.00018 = aceita compressão)
+BB_WIDTH_MIN_M15 = 0.00120         # ← AJUSTE: BB width mínimo M15 (~3× M5; expansão maior)
 BB_WIDTH_MIN_M5 = 0.00045
 SLOPE_LOOKBACK = 8
-SLOPE_MIN_M1 = 0.000003            # ← AJUSTE: slope EMA mínimo M1 (0.00003 = aceita lateral)
+SLOPE_MIN_M15 = 0.000150           # ← AJUSTE: slope EMA mínimo M15 (~2,5× M5)
 SLOPE_MIN_M5 = 0.00006
 
-ENTRY_WINDOW_SECONDS_M1 = 30      # ← AJUSTE: janela de entrada M1 (18s = menos missed_entry)
+ENTRY_WINDOW_SECONDS_M15 = 60      # ← AJUSTE: janela de entrada M15 (maior que M5)
 ENTRY_WINDOW_SECONDS_M5 = 30
 
 OPEN_TIME_CACHE_TTL_S = 15
@@ -279,7 +279,7 @@ MAX_ENTRIES = 0
 BLOCKED_COUNTERS = defaultdict(int)
 
 # Máximo de ativos simultâneos por timeframe (sobrescrito por config.txt e menu)
-MAX_ASSETS_M1: int = 2
+MAX_ASSETS_M15: int = 3
 MAX_ASSETS_M5: int = 4
 
 # =========================
@@ -321,35 +321,35 @@ M5_POOL_SWAP_MAX_ABS: int = 4            # absolute cap on swaps per rebalance c
 # =========================
 
 # Modo de entrada por timeframe (reversal | continuation)
-ENTRY_MODE_M1: str = "reversal"
+ENTRY_MODE_M15: str = "reversal"
 ENTRY_MODE_M5: str = "reversal"
 
 # Canal Keltner por TF
-KELTNER_ENABLE_M1: bool = True
-KELTNER_PERIOD_M1: int = 20
-KELTNER_SHIFT_M1: float = 1.5
+KELTNER_ENABLE_M15: bool = True
+KELTNER_PERIOD_M15: int = 20
+KELTNER_SHIFT_M15: float = 1.5
 KELTNER_ENABLE_M5: bool = True
 KELTNER_PERIOD_M5: int = 20
 KELTNER_SHIFT_M5: float = 1.5
 
 # Pivô/Fractal por TF
-PIVOT_ENABLE_M1: bool = True
-PIVOT_LEFT_M1: int = 2
-PIVOT_RIGHT_M1: int = 2
-PIVOT_PROXIMITY_PCT_M1: float = 0.002
+PIVOT_ENABLE_M15: bool = True
+PIVOT_LEFT_M15: int = 2
+PIVOT_RIGHT_M15: int = 2
+PIVOT_PROXIMITY_PCT_M15: float = 0.002
 PIVOT_ENABLE_M5: bool = True
 PIVOT_LEFT_M5: int = 2
 PIVOT_RIGHT_M5: int = 2
 PIVOT_PROXIMITY_PCT_M5: float = 0.002
 
 # Respiro (Continuação) por TF
-RESPIRO_ENABLE_M1: bool = False
-RESPIRO_IMPULSE_LOOKBACK_M1: int = 5
-RESPIRO_MIN_IMPULSE_M1: float = 0.0010
-RESPIRO_PULLBACK_MAX_FRAC_M1: float = 0.618
-RESPIRO_MAX_PULLBACK_CANDLES_M1: int = 3
-RESPIRO_TRIGGER_M1: str = "close_over_high"
-RESPIRO_CONFIRM_POLLS_M1: int = 1
+RESPIRO_ENABLE_M15: bool = False
+RESPIRO_IMPULSE_LOOKBACK_M15: int = 5
+RESPIRO_MIN_IMPULSE_M15: float = 0.0010
+RESPIRO_PULLBACK_MAX_FRAC_M15: float = 0.618
+RESPIRO_MAX_PULLBACK_CANDLES_M15: int = 3
+RESPIRO_TRIGGER_M15: str = "close_over_high"
+RESPIRO_CONFIRM_POLLS_M15: int = 1
 RESPIRO_ENABLE_M5: bool = False
 RESPIRO_IMPULSE_LOOKBACK_M5: int = 5
 RESPIRO_MIN_IMPULSE_M5: float = 0.0010
@@ -370,11 +370,11 @@ M5_ALLOW_OTC: bool = False
 M5_ALLOW_OPEN_MARKET: bool = True
 
 # V15 per-timeframe (defaults = valores globais; sobrescritos em _load_from_config)
-V15_SCORE_MIN_M1: int = 55
+V15_SCORE_MIN_M15: int = 60
 V15_SCORE_MIN_M5: int = 58
-V15_SCORE_GAP_MIN_M1: int = 1
+V15_SCORE_GAP_MIN_M15: int = 1
 V15_SCORE_GAP_MIN_M5: int = 1
-V15_CONFIRM_POLLS_M1: int = 1
+V15_CONFIRM_POLLS_M15: int = 1
 V15_CONFIRM_POLLS_M5: int = 1
 
 # =========================
@@ -384,18 +384,28 @@ V15_CONFIRM_POLLS_M5: int = 1
 #   Fase EXEC — executa SOMENTE nos primeiros SNIPER_WINDOW_SECONDS após a abertura
 #               da vela alvo, com filtro anti-fakeout (preço vs open da vela atual).
 # =========================
-SNIPER_MODE_M1: bool = False
+SNIPER_MODE_M15: bool = False
 SNIPER_MODE_M5: bool = False
-ARM_SCORE_MIN_M1: int = 60    # score mínimo V15 para ARM em M1 (mercado aberto)
+ARM_SCORE_MIN_M15: int = 65    # score mínimo V15 para ARM em M15
 ARM_SCORE_MIN_M5: int = 65    # score mínimo V15 para ARM em M5 (mercado aberto)
-FALLBACK_ARM_SCORE_MIN_M1: int = 55  # score mínimo para fallback (harami/hammer/engolfo)
+FALLBACK_ARM_SCORE_MIN_M15: int = 60  # score mínimo para fallback (harami/hammer/engolfo)
 FALLBACK_ARM_SCORE_MIN_M5: int = 60
-SNIPER_WINDOW_SECONDS: int = 5         # janela rígida de execução padrão (fallback; usar SNIPER_WINDOW_SECONDS_M1/M5)
-SNIPER_WINDOW_SECONDS_M1: int = 5
+SNIPER_WINDOW_SECONDS: int = 5         # janela rígida de execução padrão (fallback; usar SNIPER_WINDOW_SECONDS_M15/M5)
+SNIPER_WINDOW_SECONDS_M15: int = 20
 SNIPER_WINDOW_SECONDS_M5: int = 5
-SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # fallback; usar SNIPER_ANTIFAKEOUT_EXTREME_M1/M5
-SNIPER_ANTIFAKEOUT_EXTREME_M1: bool = False
+SNIPER_ANTIFAKEOUT_EXTREME: bool = False  # fallback; usar SNIPER_ANTIFAKEOUT_EXTREME_M15/M5
+SNIPER_ANTIFAKEOUT_EXTREME_M15: bool = False
 SNIPER_ANTIFAKEOUT_EXTREME_M5: bool = False
+
+# =========================
+# M15 CONTEXT FILTER FOR M5 ENTRIES
+# =========================
+# Quando habilitado, verifica a tendência M15 antes de aceitar entradas M5.
+# M15 = filtro direcional: CALL M5 só entra se M15 confirma viés de alta; PUT vice-versa.
+# Sinal neutro (M15 lateral) não bloqueia a entrada M5.
+# Ative via config.txt [M5]: m15_context_filter_enable = true
+M15_CONTEXT_FILTER_ENABLE: bool = False
+M15_CONTEXT_LOOKBACK_CANDLES: int = 5    # velas M15 para avaliar tendência
 
 # =========================
 # SERVER TIME SYNCHRONIZATION
@@ -444,18 +454,18 @@ def _load_from_config() -> None:
     Chamada uma vez no início do main. Garante retrocompatibilidade: se uma seção
     ou chave não existir no config.txt, o default hardcoded é preservado.
     """
-    global IDLE_SLEEP_S_M1, IDLE_SLEEP_S_M5, PENDING_SLEEP_S_M1, PENDING_SLEEP_S_M5
+    global IDLE_SLEEP_S_M15, IDLE_SLEEP_S_M5, PENDING_SLEEP_S_M15, PENDING_SLEEP_S_M5
     global PENDING_FREEZE_SECONDS_M5, PENDING_FREEZE_POLL_SLEEP_M5, PENDING_MAX_AGE_SECONDS_M5
     global AMOUNT_MODE, AMOUNT_FIXED, AMOUNT_PERCENT, AMOUNT_RECALC_EACH, AMOUNT_MIN
     global STOP_LOSS_PCT, STOP_WIN_PCT, MAX_ENTRIES
     global ALLOW_OTC_LIVE, M5_ALLOW_OTC, M5_ALLOW_OPEN_MARKET
     global ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR
-    global ATR_MIN_RATIO_ABS_M1, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M1, ATR_MAX_THR_M5
-    global ATR_RATIO_QUEUE_M1, ATR_RATIO_QUEUE_M5
+    global ATR_MIN_RATIO_ABS_M15, ATR_MIN_RATIO_ABS_M5, ATR_MAX_THR_M15, ATR_MAX_THR_M5
+    global ATR_RATIO_QUEUE_M15, ATR_RATIO_QUEUE_M5
     global ENABLE_TREND_STRENGTH_FILTER, ADX_PERIOD
-    global ADX_MIN_M1, ADX_MIN_M5, BB_PERIOD, BB_STD
-    global BB_WIDTH_MIN_M1, BB_WIDTH_MIN_M5, SLOPE_LOOKBACK, SLOPE_MIN_M1, SLOPE_MIN_M5
-    global ENTRY_WINDOW_SECONDS_M1, ENTRY_WINDOW_SECONDS_M5
+    global ADX_MIN_M15, ADX_MIN_M5, BB_PERIOD, BB_STD
+    global BB_WIDTH_MIN_M15, BB_WIDTH_MIN_M5, SLOPE_LOOKBACK, SLOPE_MIN_M15, SLOPE_MIN_M5
+    global ENTRY_WINDOW_SECONDS_M15, ENTRY_WINDOW_SECONDS_M5
     global V15_SCORE_MIN, V15_SCORE_GAP_MIN, V15_CONFIRM_POLLS
     global V15_RSI_PERIOD, V15_RSI_OVERSOLD, V15_RSI_OVERBOUGHT
     global V15_BB_PERIOD, V15_BB_STD, V15_BB_PROXIMITY
@@ -463,23 +473,23 @@ def _load_from_config() -> None:
     global V15_WICK_RATIO, V15_CANDLES_NEEDED
     global V15_TREND_THRESHOLD, V15_IMPULSE_THRESHOLD
     global V15_IMPULSE_MULTIPLIER, V15_WICK_SCORE_MAX, V15_WICK_SCORE_FACTOR
-    global V15_FALLBACK_NEAR_SCORE_M1
-    global M5_EXTREME_CANDLES, M5_EXTREME_FRAC, M1_STRUCTURAL_CANDLES
-    global V15_SCORE_MIN_M1, V15_SCORE_MIN_M5
-    global V15_SCORE_GAP_MIN_M1, V15_SCORE_GAP_MIN_M5
-    global V15_CONFIRM_POLLS_M1, V15_CONFIRM_POLLS_M5
-    global ENTRY_MODE_M1, ENTRY_MODE_M5
-    global KELTNER_ENABLE_M1, KELTNER_PERIOD_M1, KELTNER_SHIFT_M1
+    global V15_FALLBACK_NEAR_SCORE_M15
+    global M5_EXTREME_CANDLES, M5_EXTREME_FRAC, M15_STRUCTURAL_CANDLES
+    global V15_SCORE_MIN_M15, V15_SCORE_MIN_M5
+    global V15_SCORE_GAP_MIN_M15, V15_SCORE_GAP_MIN_M5
+    global V15_CONFIRM_POLLS_M15, V15_CONFIRM_POLLS_M5
+    global ENTRY_MODE_M15, ENTRY_MODE_M5
+    global KELTNER_ENABLE_M15, KELTNER_PERIOD_M15, KELTNER_SHIFT_M15
     global KELTNER_ENABLE_M5, KELTNER_PERIOD_M5, KELTNER_SHIFT_M5
-    global PIVOT_ENABLE_M1, PIVOT_LEFT_M1, PIVOT_RIGHT_M1, PIVOT_PROXIMITY_PCT_M1
+    global PIVOT_ENABLE_M15, PIVOT_LEFT_M15, PIVOT_RIGHT_M15, PIVOT_PROXIMITY_PCT_M15
     global PIVOT_ENABLE_M5, PIVOT_LEFT_M5, PIVOT_RIGHT_M5, PIVOT_PROXIMITY_PCT_M5
-    global RESPIRO_ENABLE_M1, RESPIRO_IMPULSE_LOOKBACK_M1, RESPIRO_MIN_IMPULSE_M1
-    global RESPIRO_PULLBACK_MAX_FRAC_M1, RESPIRO_MAX_PULLBACK_CANDLES_M1
-    global RESPIRO_TRIGGER_M1, RESPIRO_CONFIRM_POLLS_M1
+    global RESPIRO_ENABLE_M15, RESPIRO_IMPULSE_LOOKBACK_M15, RESPIRO_MIN_IMPULSE_M15
+    global RESPIRO_PULLBACK_MAX_FRAC_M15, RESPIRO_MAX_PULLBACK_CANDLES_M15
+    global RESPIRO_TRIGGER_M15, RESPIRO_CONFIRM_POLLS_M15
     global RESPIRO_ENABLE_M5, RESPIRO_IMPULSE_LOOKBACK_M5, RESPIRO_MIN_IMPULSE_M5
     global RESPIRO_PULLBACK_MAX_FRAC_M5, RESPIRO_MAX_PULLBACK_CANDLES_M5
     global RESPIRO_TRIGGER_M5, RESPIRO_CONFIRM_POLLS_M5
-    global MAX_ASSETS_M1, MAX_ASSETS_M5
+    global MAX_ASSETS_M15, MAX_ASSETS_M5
     global M5_POOL_DYNAMIC_ENABLE, M5_POOL_REBALANCE_MINUTES, M5_POOL_DEAD_MINUTES
     global M5_POOL_SWAP_MAX_NORMAL, M5_POOL_SWAP_MAX_DEAD, M5_POOL_ASSET_COOLDOWN_MINUTES
     global M5_POOL_SCORE_W_CONFIRMED, M5_POOL_SCORE_W_EXPIRED_REJECTED
@@ -490,10 +500,11 @@ def _load_from_config() -> None:
     global M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD, M5_POOL_DEAD_MARKET_RANGE_RATIO_THR
     global M5_POOL_DEAD_MARKET_PENALTY
     global M5_POOL_SWAP_SCALE_WITH_UNIVERSE, M5_POOL_SWAP_UNIVERSE_DIVISOR, M5_POOL_SWAP_MAX_ABS
-    global SNIPER_MODE_M1, SNIPER_MODE_M5, ARM_SCORE_MIN_M1, ARM_SCORE_MIN_M5
-    global FALLBACK_ARM_SCORE_MIN_M1, FALLBACK_ARM_SCORE_MIN_M5
-    global SNIPER_WINDOW_SECONDS, SNIPER_WINDOW_SECONDS_M1, SNIPER_WINDOW_SECONDS_M5
-    global SNIPER_ANTIFAKEOUT_EXTREME, SNIPER_ANTIFAKEOUT_EXTREME_M1, SNIPER_ANTIFAKEOUT_EXTREME_M5
+    global SNIPER_MODE_M15, SNIPER_MODE_M5, ARM_SCORE_MIN_M15, ARM_SCORE_MIN_M5
+    global FALLBACK_ARM_SCORE_MIN_M15, FALLBACK_ARM_SCORE_MIN_M5
+    global SNIPER_WINDOW_SECONDS, SNIPER_WINDOW_SECONDS_M15, SNIPER_WINDOW_SECONDS_M5
+    global SNIPER_ANTIFAKEOUT_EXTREME, SNIPER_ANTIFAKEOUT_EXTREME_M15, SNIPER_ANTIFAKEOUT_EXTREME_M5
+    global M15_CONTEXT_FILTER_ENABLE, M15_CONTEXT_LOOKBACK_CANDLES
 
     # [MARKET]
     ALLOW_OTC_LIVE = _cfgbool('MARKET', 'allow_otc_live', ALLOW_OTC_LIVE)
@@ -501,9 +512,9 @@ def _load_from_config() -> None:
     M5_ALLOW_OPEN_MARKET = _cfgbool('MARKET', 'm5_allow_open_market', M5_ALLOW_OPEN_MARKET)
 
     # [SLEEP]
-    IDLE_SLEEP_S_M1 = _cfgget('SLEEP', 'idle_sleep_m1', IDLE_SLEEP_S_M1, float)
+    IDLE_SLEEP_S_M15 = _cfgget('SLEEP', 'idle_sleep_m15', IDLE_SLEEP_S_M15, float)
     IDLE_SLEEP_S_M5 = _cfgget('SLEEP', 'idle_sleep_m5', IDLE_SLEEP_S_M5, float)
-    PENDING_SLEEP_S_M1 = _cfgget('SLEEP', 'pending_sleep_m1', PENDING_SLEEP_S_M1, float)
+    PENDING_SLEEP_S_M15 = _cfgget('SLEEP', 'pending_sleep_m15', PENDING_SLEEP_S_M15, float)
     PENDING_SLEEP_S_M5 = _cfgget('SLEEP', 'pending_sleep_m5', PENDING_SLEEP_S_M5, float)
     PENDING_FREEZE_POLL_SLEEP_M5 = _cfgget('SLEEP', 'pending_freeze_poll_sleep_m5', PENDING_FREEZE_POLL_SLEEP_M5, float)
 
@@ -518,9 +529,10 @@ def _load_from_config() -> None:
     MAX_ENTRIES = _cfgget('RISK', 'max_entries', MAX_ENTRIES, int)
 
     def _load_tf(tf_label: str) -> None:
-        """Loads [M1] or [M5] section and updates the corresponding globals."""
-        sec = tf_label  # e.g. 'M1' or 'M5'
+        """Loads [M15] or [M5] section and updates the corresponding globals."""
+        sec = tf_label  # e.g. 'M15' or 'M5'
         is_m5 = (sec == 'M5')
+        is_m15 = (sec == 'M15')
 
         # Entry mode — validate: only 'reversal' and 'continuation' are valid
         _VALID_MODES = ('reversal', 'continuation')
@@ -531,12 +543,12 @@ def _load_from_config() -> None:
         if is_m5:
             globals()['ENTRY_MODE_M5'] = em
         else:
-            globals()['ENTRY_MODE_M1'] = em
+            globals()['ENTRY_MODE_M15'] = em
 
-        # ATR — M1 and M5 both load the full set of ATR parameters.
+        # ATR — M15 and M5 both load the full set of ATR parameters.
         # Shared globals (ENABLE_ATR_FILTER, ATR_PERIOD, ATR_ADAPTIVE_WINDOW, ATR_ADAPTIVE_FACTOR)
-        # are loaded by both TFs; since _load_tf('M1') runs first and _load_tf('M5') second,
-        # M5 values win when they differ. The per-TF caps (ATR_MAX_THR_M1/M5) are independent.
+        # are loaded by both TFs; since _load_tf('M15') runs first and _load_tf('M5') second,
+        # M5 values win when they differ. The per-TF caps (ATR_MAX_THR_M15/M5) are independent.
         if is_m5:
             globals()['ATR_MIN_RATIO_ABS_M5'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M5, float)
             globals()['ENABLE_ATR_FILTER'] = _cfgbool(sec, 'enable_atr_filter', ENABLE_ATR_FILTER)
@@ -549,14 +561,14 @@ def _load_from_config() -> None:
             globals()['ATR_PERIOD'] = _cfgget(sec, 'atr_period', ATR_PERIOD, int)
             globals()['ATR_ADAPTIVE_WINDOW'] = _cfgget(sec, 'atr_adaptive_window', ATR_ADAPTIVE_WINDOW, int)
             globals()['ATR_ADAPTIVE_FACTOR'] = _cfgget(sec, 'atr_adaptive_factor', ATR_ADAPTIVE_FACTOR, float)
-            globals()['ATR_MAX_THR_M1'] = _cfgget(sec, 'atr_max_thr', ATR_MAX_THR_M1, float)
-            globals()['ATR_MIN_RATIO_ABS_M1'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M1, float)
+            globals()['ATR_MAX_THR_M15'] = _cfgget(sec, 'atr_max_thr', ATR_MAX_THR_M15, float)
+            globals()['ATR_MIN_RATIO_ABS_M15'] = _cfgget(sec, 'atr_min_ratio', ATR_MIN_RATIO_ABS_M15, float)
 
         # ADX/BB/Slope
-        adx_key = 'ADX_MIN_M5' if is_m5 else 'ADX_MIN_M1'
-        bb_key = 'BB_WIDTH_MIN_M5' if is_m5 else 'BB_WIDTH_MIN_M1'
-        slp_key = 'SLOPE_MIN_M5' if is_m5 else 'SLOPE_MIN_M1'
-        ew_key = 'ENTRY_WINDOW_SECONDS_M5' if is_m5 else 'ENTRY_WINDOW_SECONDS_M1'
+        adx_key = 'ADX_MIN_M5' if is_m5 else 'ADX_MIN_M15'
+        bb_key = 'BB_WIDTH_MIN_M5' if is_m5 else 'BB_WIDTH_MIN_M15'
+        slp_key = 'SLOPE_MIN_M5' if is_m5 else 'SLOPE_MIN_M15'
+        ew_key = 'ENTRY_WINDOW_SECONDS_M5' if is_m5 else 'ENTRY_WINDOW_SECONDS_M15'
 
         globals()['ENABLE_TREND_STRENGTH_FILTER'] = _cfgbool(sec, 'enable_trend_filter', ENABLE_TREND_STRENGTH_FILTER)
         globals()['ADX_PERIOD'] = _cfgget(sec, 'adx_period', ADX_PERIOD, int)
@@ -569,17 +581,17 @@ def _load_from_config() -> None:
         globals()[ew_key] = _cfgget(sec, 'entry_window_seconds', globals()[ew_key], int)
 
         # V15 per-TF
-        sm_key = 'V15_SCORE_MIN_M5' if is_m5 else 'V15_SCORE_MIN_M1'
-        sg_key = 'V15_SCORE_GAP_MIN_M5' if is_m5 else 'V15_SCORE_GAP_MIN_M1'
-        cp_key = 'V15_CONFIRM_POLLS_M5' if is_m5 else 'V15_CONFIRM_POLLS_M1'
+        sm_key = 'V15_SCORE_MIN_M5' if is_m5 else 'V15_SCORE_MIN_M15'
+        sg_key = 'V15_SCORE_GAP_MIN_M5' if is_m5 else 'V15_SCORE_GAP_MIN_M15'
+        cp_key = 'V15_CONFIRM_POLLS_M5' if is_m5 else 'V15_CONFIRM_POLLS_M15'
         globals()[sm_key] = _cfgget(sec, 'v15_score_min', globals()[sm_key], int)
         globals()[sg_key] = _cfgget(sec, 'v15_score_gap_min', globals()[sg_key], int)
         globals()[cp_key] = _cfgget(sec, 'v15_confirm_polls', globals()[cp_key], int)
 
-        # V15 shared params — loaded from both [M1] and [M5] sections (M5 loaded last,
-        # so M5 values overwrite M1 values for RSI_PERIOD, BB_PERIOD, etc.).
+        # V15 shared params — loaded from both [M15] and [M5] sections (M5 loaded last,
+        # so M5 values overwrite M15 values for RSI_PERIOD, BB_PERIOD, etc.).
         # These calibration values are typically the same for both TFs; per-TF score/gap/polls
-        # use dedicated globals (V15_SCORE_MIN_M1/M5, etc.) and are not overwritten here.
+        # use dedicated globals (V15_SCORE_MIN_M15/M5, etc.) and are not overwritten here.
         globals()['V15_RSI_PERIOD'] = _cfgget(sec, 'v15_rsi_period', V15_RSI_PERIOD, int)
         globals()['V15_RSI_OVERSOLD'] = _cfgget(sec, 'v15_rsi_oversold', V15_RSI_OVERSOLD, int)
         globals()['V15_RSI_OVERBOUGHT'] = _cfgget(sec, 'v15_rsi_overbought', V15_RSI_OVERBOUGHT, int)
@@ -595,7 +607,7 @@ def _load_from_config() -> None:
         globals()['V15_IMPULSE_MULTIPLIER'] = _cfgget(sec, 'v15_impulse_multiplier', V15_IMPULSE_MULTIPLIER, int)
         globals()['V15_WICK_SCORE_MAX'] = _cfgget(sec, 'v15_wick_score_max', V15_WICK_SCORE_MAX, int)
         globals()['V15_WICK_SCORE_FACTOR'] = _cfgget(sec, 'v15_wick_score_factor', V15_WICK_SCORE_FACTOR, int)
-        globals()['V15_FALLBACK_NEAR_SCORE_M1'] = _cfgget(sec, 'v15_fallback_near_score', V15_FALLBACK_NEAR_SCORE_M1, int)
+        globals()['V15_FALLBACK_NEAR_SCORE_M15'] = _cfgget(sec, 'v15_fallback_near_score', V15_FALLBACK_NEAR_SCORE_M15, int)
 
         if is_m5:
             globals()['M5_EXTREME_CANDLES'] = _cfgget(sec, 'm5_extreme_candles', M5_EXTREME_CANDLES, int)
@@ -629,15 +641,18 @@ def _load_from_config() -> None:
             globals()['M5_POOL_SWAP_SCALE_WITH_UNIVERSE'] = _cfgbool(sec, 'pool_swap_scale_with_universe', M5_POOL_SWAP_SCALE_WITH_UNIVERSE)
             globals()['M5_POOL_SWAP_UNIVERSE_DIVISOR'] = _cfgget(sec, 'pool_swap_universe_divisor', M5_POOL_SWAP_UNIVERSE_DIVISOR, int)
             globals()['M5_POOL_SWAP_MAX_ABS'] = _cfgget(sec, 'pool_swap_max_abs', M5_POOL_SWAP_MAX_ABS, int)
+            # M15 context filter for M5 entries
+            globals()['M15_CONTEXT_FILTER_ENABLE'] = _cfgbool(sec, 'm15_context_filter_enable', M15_CONTEXT_FILTER_ENABLE)
+            globals()['M15_CONTEXT_LOOKBACK_CANDLES'] = _cfgget(sec, 'm15_context_lookback_candles', M15_CONTEXT_LOOKBACK_CANDLES, int)
         else:
-            globals()['M1_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm1_structural_candles', M1_STRUCTURAL_CANDLES, int)
+            globals()['M15_STRUCTURAL_CANDLES'] = _cfgget(sec, 'm15_structural_candles', M15_STRUCTURAL_CANDLES, int)
 
         # ARM + SNIPER 0–5s — carregado para ambas as TFs
-        _sniper_key = 'SNIPER_MODE_M5' if is_m5 else 'SNIPER_MODE_M1'
-        _arm_key    = 'ARM_SCORE_MIN_M5' if is_m5 else 'ARM_SCORE_MIN_M1'
-        _fb_arm_key = 'FALLBACK_ARM_SCORE_MIN_M5' if is_m5 else 'FALLBACK_ARM_SCORE_MIN_M1'
-        _sw_key     = 'SNIPER_WINDOW_SECONDS_M5' if is_m5 else 'SNIPER_WINDOW_SECONDS_M1'
-        _afe_key    = 'SNIPER_ANTIFAKEOUT_EXTREME_M5' if is_m5 else 'SNIPER_ANTIFAKEOUT_EXTREME_M1'
+        _sniper_key = 'SNIPER_MODE_M5' if is_m5 else 'SNIPER_MODE_M15'
+        _arm_key    = 'ARM_SCORE_MIN_M5' if is_m5 else 'ARM_SCORE_MIN_M15'
+        _fb_arm_key = 'FALLBACK_ARM_SCORE_MIN_M5' if is_m5 else 'FALLBACK_ARM_SCORE_MIN_M15'
+        _sw_key     = 'SNIPER_WINDOW_SECONDS_M5' if is_m5 else 'SNIPER_WINDOW_SECONDS_M15'
+        _afe_key    = 'SNIPER_ANTIFAKEOUT_EXTREME_M5' if is_m5 else 'SNIPER_ANTIFAKEOUT_EXTREME_M15'
         globals()[_sniper_key] = _cfgbool(sec, 'sniper_mode', globals()[_sniper_key])
         globals()[_arm_key]    = _cfgget(sec, 'arm_score_min', globals()[_arm_key], int)
         globals()[_fb_arm_key] = _cfgget(sec, 'fallback_arm_score_min', globals()[_fb_arm_key], int)
@@ -645,31 +660,31 @@ def _load_from_config() -> None:
         globals()[_afe_key]    = _cfgbool(sec, 'sniper_antifakeout_extreme', globals()[_afe_key])
 
         # Keltner
-        ke_key = 'KELTNER_ENABLE_M5' if is_m5 else 'KELTNER_ENABLE_M1'
-        kp_key = 'KELTNER_PERIOD_M5' if is_m5 else 'KELTNER_PERIOD_M1'
-        ks_key = 'KELTNER_SHIFT_M5' if is_m5 else 'KELTNER_SHIFT_M1'
+        ke_key = 'KELTNER_ENABLE_M5' if is_m5 else 'KELTNER_ENABLE_M15'
+        kp_key = 'KELTNER_PERIOD_M5' if is_m5 else 'KELTNER_PERIOD_M15'
+        ks_key = 'KELTNER_SHIFT_M5' if is_m5 else 'KELTNER_SHIFT_M15'
         globals()[ke_key] = _cfgbool(sec, 'keltner_enable', globals()[ke_key])
         globals()[kp_key] = _cfgget(sec, 'keltner_period', globals()[kp_key], int)
         globals()[ks_key] = _cfgget(sec, 'keltner_shift', globals()[ks_key], float)
 
         # Pivot
-        pe_key = 'PIVOT_ENABLE_M5' if is_m5 else 'PIVOT_ENABLE_M1'
-        pl_key = 'PIVOT_LEFT_M5' if is_m5 else 'PIVOT_LEFT_M1'
-        pr_key = 'PIVOT_RIGHT_M5' if is_m5 else 'PIVOT_RIGHT_M1'
-        pp_key = 'PIVOT_PROXIMITY_PCT_M5' if is_m5 else 'PIVOT_PROXIMITY_PCT_M1'
+        pe_key = 'PIVOT_ENABLE_M5' if is_m5 else 'PIVOT_ENABLE_M15'
+        pl_key = 'PIVOT_LEFT_M5' if is_m5 else 'PIVOT_LEFT_M15'
+        pr_key = 'PIVOT_RIGHT_M5' if is_m5 else 'PIVOT_RIGHT_M15'
+        pp_key = 'PIVOT_PROXIMITY_PCT_M5' if is_m5 else 'PIVOT_PROXIMITY_PCT_M15'
         globals()[pe_key] = _cfgbool(sec, 'pivot_enable', globals()[pe_key])
         globals()[pl_key] = _cfgget(sec, 'pivot_left', globals()[pl_key], int)
         globals()[pr_key] = _cfgget(sec, 'pivot_right', globals()[pr_key], int)
         globals()[pp_key] = _cfgget(sec, 'pivot_proximity_pct', globals()[pp_key], float)
 
         # Respiro
-        re_key = 'RESPIRO_ENABLE_M5' if is_m5 else 'RESPIRO_ENABLE_M1'
-        ril_key = 'RESPIRO_IMPULSE_LOOKBACK_M5' if is_m5 else 'RESPIRO_IMPULSE_LOOKBACK_M1'
-        rmi_key = 'RESPIRO_MIN_IMPULSE_M5' if is_m5 else 'RESPIRO_MIN_IMPULSE_M1'
-        rpf_key = 'RESPIRO_PULLBACK_MAX_FRAC_M5' if is_m5 else 'RESPIRO_PULLBACK_MAX_FRAC_M1'
-        rpc_key = 'RESPIRO_MAX_PULLBACK_CANDLES_M5' if is_m5 else 'RESPIRO_MAX_PULLBACK_CANDLES_M1'
-        rt_key = 'RESPIRO_TRIGGER_M5' if is_m5 else 'RESPIRO_TRIGGER_M1'
-        rcp_key = 'RESPIRO_CONFIRM_POLLS_M5' if is_m5 else 'RESPIRO_CONFIRM_POLLS_M1'
+        re_key = 'RESPIRO_ENABLE_M5' if is_m5 else 'RESPIRO_ENABLE_M15'
+        ril_key = 'RESPIRO_IMPULSE_LOOKBACK_M5' if is_m5 else 'RESPIRO_IMPULSE_LOOKBACK_M15'
+        rmi_key = 'RESPIRO_MIN_IMPULSE_M5' if is_m5 else 'RESPIRO_MIN_IMPULSE_M15'
+        rpf_key = 'RESPIRO_PULLBACK_MAX_FRAC_M5' if is_m5 else 'RESPIRO_PULLBACK_MAX_FRAC_M15'
+        rpc_key = 'RESPIRO_MAX_PULLBACK_CANDLES_M5' if is_m5 else 'RESPIRO_MAX_PULLBACK_CANDLES_M15'
+        rt_key = 'RESPIRO_TRIGGER_M5' if is_m5 else 'RESPIRO_TRIGGER_M15'
+        rcp_key = 'RESPIRO_CONFIRM_POLLS_M5' if is_m5 else 'RESPIRO_CONFIRM_POLLS_M15'
         globals()[re_key] = _cfgbool(sec, 'respiro_enable', globals()[re_key])
         globals()[ril_key] = _cfgget(sec, 'respiro_impulse_lookback', globals()[ril_key], int)
         globals()[rmi_key] = _cfgget(sec, 'respiro_min_impulse', globals()[rmi_key], float)
@@ -679,19 +694,21 @@ def _load_from_config() -> None:
         globals()[rcp_key] = _cfgget(sec, 'respiro_confirm_polls', globals()[rcp_key], int)
 
         # max_assets por TF
-        ma_key = 'MAX_ASSETS_M5' if is_m5 else 'MAX_ASSETS_M1'
+        ma_key = 'MAX_ASSETS_M5' if is_m5 else 'MAX_ASSETS_M15'
         globals()[ma_key] = _cfgget(sec, 'max_assets', globals()[ma_key], int)
 
-    _load_tf('M1')
+    _load_tf('M15')
     _load_tf('M5')
 
-    # Re-sync shared V15 global (keep backward compat: V15_SCORE_MIN stays as M1 default)
-    globals()['V15_SCORE_MIN'] = globals()['V15_SCORE_MIN_M1']
-    globals()['V15_SCORE_GAP_MIN'] = globals()['V15_SCORE_GAP_MIN_M1']
-    globals()['V15_CONFIRM_POLLS'] = globals()['V15_CONFIRM_POLLS_M1']
+    # Re-sync shared V15 global: V15_SCORE_MIN mirrors M15 default after load.
+    # V15_SCORE_MIN is used as a legacy fallback in single-asset loop_patterns().
+    # M5 and M15 each have dedicated V15_SCORE_MIN_M5/M15 that take precedence.
+    globals()['V15_SCORE_MIN'] = globals()['V15_SCORE_MIN_M15']
+    globals()['V15_SCORE_GAP_MIN'] = globals()['V15_SCORE_GAP_MIN_M15']
+    globals()['V15_CONFIRM_POLLS'] = globals()['V15_CONFIRM_POLLS_M15']
 
     # Rebuild ATR queues if adaptive window changed
-    globals()['ATR_RATIO_QUEUE_M1'] = deque(maxlen=globals()['ATR_ADAPTIVE_WINDOW'])
+    globals()['ATR_RATIO_QUEUE_M15'] = deque(maxlen=globals()['ATR_ADAPTIVE_WINDOW'])
     globals()['ATR_RATIO_QUEUE_M5'] = deque(maxlen=globals()['ATR_ADAPTIVE_WINDOW'])
 
 pending: Optional[Dict[str, Any]] = None
@@ -704,7 +721,7 @@ _last_pending_status_printed_for_id: Optional[Tuple[str, int, str, int]] = None
 # RESULTADOS
 # =========================
 EXTRA_WAIT_SECONDS = 12
-M1_RESULT_TIMEOUT = 80
+M15_RESULT_TIMEOUT = 1020  # 15×60 + 120s buffer — espera resultado de vela M15
 M5_RESULT_TIMEOUT = 260
 
 EARLY_LOSS_GUARD_SECONDS = 55
@@ -1230,7 +1247,7 @@ def report_websocket_closed() -> None:
 def _ensure_connected() -> bool:
     """Verifica a conexão com a IQ Option e reconecta se necessário.
 
-    Para evitar overhead em loops rápidos (M1: ~0.2s/iteração), a verificação
+    Para evitar overhead em loops (M5: ~1.5s/iteração; M15: ~3.0s/iteração), a verificação
     de check_connect() é executada no máximo a cada _RECONNECT_CHECK_INTERVAL_S
     segundos, exceto quando _SAFE_HOLD_MODE está ativo (verifica imediatamente).
 
@@ -1715,8 +1732,8 @@ def calculate_atr_from_candles(velas: List[Dict[str, Any]], periodo=14) -> Optio
 
 
 def adaptive_atr_threshold_update(tf_min: int, atr_ratio: Optional[float]) -> float:
-    base = ATR_MIN_RATIO_ABS_M5 if tf_min == 5 else ATR_MIN_RATIO_ABS_M1
-    q = ATR_RATIO_QUEUE_M5 if tf_min == 5 else ATR_RATIO_QUEUE_M1
+    base = ATR_MIN_RATIO_ABS_M5 if tf_min == 5 else ATR_MIN_RATIO_ABS_M15
+    q = ATR_RATIO_QUEUE_M5 if tf_min == 5 else ATR_RATIO_QUEUE_M15
     if atr_ratio is None:
         return base
     try:
@@ -1726,8 +1743,8 @@ def adaptive_atr_threshold_update(tf_min: int, atr_ratio: Optional[float]) -> fl
         med = statistics.median(list(q))
         dyn = max(base, med * ATR_ADAPTIVE_FACTOR)
         # Cap do threshold adaptativo por TF: evita que suba demais e trave entradas
-        if tf_min == 1:
-            dyn = min(dyn, ATR_MAX_THR_M1)
+        if tf_min == 15:
+            dyn = min(dyn, ATR_MAX_THR_M15)
         elif tf_min == 5:
             dyn = min(dyn, ATR_MAX_THR_M5)
         return max(base, dyn)
@@ -1818,9 +1835,9 @@ def passes_trend_strength_filter(tf_min: int, velas: List[Dict[str, Any]]) -> bo
         return True
 
     closes = [float(v["close"]) for v in velas]
-    adx_min = ADX_MIN_M5 if tf_min == 5 else ADX_MIN_M1
-    bb_min = BB_WIDTH_MIN_M5 if tf_min == 5 else BB_WIDTH_MIN_M1
-    slope_min = SLOPE_MIN_M5 if tf_min == 5 else SLOPE_MIN_M1
+    adx_min = ADX_MIN_M5 if tf_min == 5 else ADX_MIN_M15
+    bb_min = BB_WIDTH_MIN_M5 if tf_min == 5 else BB_WIDTH_MIN_M15
+    slope_min = SLOPE_MIN_M5 if tf_min == 5 else SLOPE_MIN_M15
 
     adx = adx_from_candles(velas, period=ADX_PERIOD)
     bbw = bb_width_norm(closes, period=BB_PERIOD, std_mult=BB_STD)
@@ -2198,14 +2215,14 @@ def _detect_respiro(
     Returns dict de sinal (mesmo formato de check_patterns) ou None.
     """
     is_m5 = (tf_min == 5)
-    respiro_enable = RESPIRO_ENABLE_M5 if is_m5 else RESPIRO_ENABLE_M1
+    respiro_enable = RESPIRO_ENABLE_M5 if is_m5 else RESPIRO_ENABLE_M15
     if not respiro_enable:
         return None
 
-    impulse_lb = RESPIRO_IMPULSE_LOOKBACK_M5 if is_m5 else RESPIRO_IMPULSE_LOOKBACK_M1
-    min_impulse = RESPIRO_MIN_IMPULSE_M5 if is_m5 else RESPIRO_MIN_IMPULSE_M1
-    pb_max_frac = RESPIRO_PULLBACK_MAX_FRAC_M5 if is_m5 else RESPIRO_PULLBACK_MAX_FRAC_M1
-    max_pb_candles = RESPIRO_MAX_PULLBACK_CANDLES_M5 if is_m5 else RESPIRO_MAX_PULLBACK_CANDLES_M1
+    impulse_lb = RESPIRO_IMPULSE_LOOKBACK_M5 if is_m5 else RESPIRO_IMPULSE_LOOKBACK_M15
+    min_impulse = RESPIRO_MIN_IMPULSE_M5 if is_m5 else RESPIRO_MIN_IMPULSE_M15
+    pb_max_frac = RESPIRO_PULLBACK_MAX_FRAC_M5 if is_m5 else RESPIRO_PULLBACK_MAX_FRAC_M15
+    max_pb_candles = RESPIRO_MAX_PULLBACK_CANDLES_M5 if is_m5 else RESPIRO_MAX_PULLBACK_CANDLES_M15
 
     min_velas = impulse_lb + max_pb_candles + 3
     if len(velas) < min_velas:
@@ -2284,7 +2301,7 @@ def _detect_respiro(
                 continue
 
         # Sinal detectado
-        v15_score_min = V15_SCORE_MIN_M5 if is_m5 else V15_SCORE_MIN_M1
+        v15_score_min = V15_SCORE_MIN_M5 if is_m5 else V15_SCORE_MIN_M15
         return {
             "pattern_name": f"Respiro_{'CALL' if direction == 'call' else 'PUT'}",
             "direction_hint": direction,
@@ -2331,7 +2348,7 @@ V15_IMPULSE_THRESHOLD = 0.0006
 V15_IMPULSE_MULTIPLIER = 8000
 V15_WICK_SCORE_MAX = 25
 V15_WICK_SCORE_FACTOR = 35
-V15_FALLBACK_NEAR_SCORE_M1 = 38
+V15_FALLBACK_NEAR_SCORE_M15 = 38
 
 # =========================
 # FILTRO ESTRUTURAL M5 (v15.1)
@@ -2386,28 +2403,28 @@ def _m5_extreme_filter(direction: str, velas: List[Dict[str, Any]]) -> bool:
 
 
 # =========================
-# FILTRO ESTRUTURAL M1 (v15.2)
-# Aplicado exclusivamente no timeframe M1 para sinais V15.
+# FILTRO ESTRUTURAL M15 (v15.2 adaptado)
+# Aplicado no timeframe M15 para sinais V15.
 # Garante que a vela candidata esteja no 1/3 extremo do micro-range,
-# evitando reversões no meio do range (zonas ruidosas para M1).
-# Para ajuste futuro: altere M1_STRUCTURAL_CANDLES (janela).
+# evitando reversões no meio do range (zonas ruidosas para M15).
+# Para ajuste futuro: altere M15_STRUCTURAL_CANDLES (janela).
 # =========================
-M1_STRUCTURAL_CANDLES = 5  # Janela de velas para definir o micro-range estrutural M1
+M15_STRUCTURAL_CANDLES = 5  # Janela de velas para definir o micro-range estrutural M15
 
 
-def _m1_structural_filter(direction: str, velas: List[Dict[str, Any]]) -> bool:
+def _m15_structural_filter(direction: str, velas: List[Dict[str, Any]]) -> bool:
     """
-    Filtro de localização estrutural leve para M1 (v15.2).
+    Filtro de localização estrutural leve para M15 (v15.2 adaptado).
 
     Verifica se o fechamento da vela candidata (penúltima da lista)
-    está no 1/3 extremo do micro-range das últimas M1_STRUCTURAL_CANDLES velas:
+    está no 1/3 extremo do micro-range das últimas M15_STRUCTURAL_CANDLES velas:
       - CALL: close no 1/3 inferior do micro-range → favorece reversão de alta
       - PUT : close no 1/3 superior do micro-range → favorece reversão de baixa
 
     Retorna True se o sinal PASSA o filtro, False se deve ser rejeitado.
     Se não houver velas suficientes, não bloqueia (passa por padrão).
     """
-    window = velas[-(M1_STRUCTURAL_CANDLES + 1):-1]
+    window = velas[-(M15_STRUCTURAL_CANDLES + 1):-1]
     if len(window) < 3:
         return True  # não bloqueia por falta de dados
 
@@ -2428,6 +2445,41 @@ def _m1_structural_filter(direction: str, velas: List[Dict[str, Any]]) -> bool:
     else:  # put
         # Aceita se fechamento está no 1/3 superior do micro-range
         return candidate_close >= high - third
+
+
+def _get_m15_context(ativo: str) -> str:
+    """Determina o viés direcional do ativo em M15 a partir das últimas velas.
+
+    Busca as últimas M15_CONTEXT_LOOKBACK_CANDLES velas de 15 minutos e compara
+    o fechamento da última com a média dos fechamentos anteriores.
+
+    Retorna:
+        'up'      — M15 em tendência de alta (confirma CALL M5)
+        'down'    — M15 em tendência de baixa (confirma PUT M5)
+        'neutral' — M15 lateral ou dados insuficientes (não bloqueia)
+    """
+    if API is None or M15_CONTEXT_LOOKBACK_CANDLES < 2:
+        return 'neutral'
+    try:
+        candles = API.get_candles(ativo, 15 * 60, M15_CONTEXT_LOOKBACK_CANDLES + 1, get_now_ts())
+        if not candles or len(candles) < 2:
+            return 'neutral'
+        # Use fechamentos das últimas velas (excluindo a vela atual incompleta se necessário)
+        closes = [float(c.get('close', 0)) for c in candles]
+        last = closes[-1]
+        prev = closes[:-1]
+        avg_prev = sum(prev) / len(prev) if prev else last
+        if avg_prev <= 0:
+            return 'neutral'
+        pct_diff = (last - avg_prev) / avg_prev
+        # Limiar de 0.02% para considerar tendência (filtra ruído)
+        if pct_diff > 0.0002:
+            return 'up'
+        if pct_diff < -0.0002:
+            return 'down'
+        return 'neutral'
+    except Exception:
+        return 'neutral'
 
 
 def _v15_rsi(closes: List[float], period: int = 14) -> Optional[float]:
@@ -2546,21 +2598,21 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
 
     # --- Seleciona parâmetros por TF ---
     is_m5 = (tf_min == 5)
-    v15_score_min   = V15_SCORE_MIN_M5   if is_m5 else V15_SCORE_MIN_M1
-    v15_gap_min     = V15_SCORE_GAP_MIN_M5 if is_m5 else V15_SCORE_GAP_MIN_M1
-    entry_mode_tf   = ENTRY_MODE_M5      if is_m5 else ENTRY_MODE_M1
-    keltner_enable  = KELTNER_ENABLE_M5  if is_m5 else KELTNER_ENABLE_M1
-    keltner_period  = KELTNER_PERIOD_M5  if is_m5 else KELTNER_PERIOD_M1
-    keltner_shift   = KELTNER_SHIFT_M5   if is_m5 else KELTNER_SHIFT_M1
-    pivot_enable    = PIVOT_ENABLE_M5    if is_m5 else PIVOT_ENABLE_M1
-    pivot_left      = PIVOT_LEFT_M5      if is_m5 else PIVOT_LEFT_M1
-    pivot_right     = PIVOT_RIGHT_M5     if is_m5 else PIVOT_RIGHT_M1
-    pivot_prox_pct  = PIVOT_PROXIMITY_PCT_M5 if is_m5 else PIVOT_PROXIMITY_PCT_M1
+    v15_score_min   = V15_SCORE_MIN_M5   if is_m5 else V15_SCORE_MIN_M15
+    v15_gap_min     = V15_SCORE_GAP_MIN_M5 if is_m5 else V15_SCORE_GAP_MIN_M15
+    entry_mode_tf   = ENTRY_MODE_M5      if is_m5 else ENTRY_MODE_M15
+    keltner_enable  = KELTNER_ENABLE_M5  if is_m5 else KELTNER_ENABLE_M15
+    keltner_period  = KELTNER_PERIOD_M5  if is_m5 else KELTNER_PERIOD_M15
+    keltner_shift   = KELTNER_SHIFT_M5   if is_m5 else KELTNER_SHIFT_M15
+    pivot_enable    = PIVOT_ENABLE_M5    if is_m5 else PIVOT_ENABLE_M15
+    pivot_left      = PIVOT_LEFT_M5      if is_m5 else PIVOT_LEFT_M15
+    pivot_right     = PIVOT_RIGHT_M5     if is_m5 else PIVOT_RIGHT_M15
+    pivot_prox_pct  = PIVOT_PROXIMITY_PCT_M5 if is_m5 else PIVOT_PROXIMITY_PCT_M15
 
     # --- ARM + SNIPER: score elevado e modo de execução diferenciado ---
-    sniper_mode_tf           = SNIPER_MODE_M5           if is_m5 else SNIPER_MODE_M1
-    arm_score_min_tf         = ARM_SCORE_MIN_M5         if is_m5 else ARM_SCORE_MIN_M1
-    fallback_arm_score_min_tf = FALLBACK_ARM_SCORE_MIN_M5 if is_m5 else FALLBACK_ARM_SCORE_MIN_M1
+    sniper_mode_tf           = SNIPER_MODE_M5           if is_m5 else SNIPER_MODE_M15
+    arm_score_min_tf         = ARM_SCORE_MIN_M5         if is_m5 else ARM_SCORE_MIN_M15
+    fallback_arm_score_min_tf = FALLBACK_ARM_SCORE_MIN_M5 if is_m5 else FALLBACK_ARM_SCORE_MIN_M15
     # Em modo sniper, usa arm_score_min (mais alto) para compensar remoção da confirmação intra-vela
     effective_score_min      = arm_score_min_tf if sniper_mode_tf else v15_score_min
     # Tag de pattern_mode: "arm_sniper" em sniper mode, "v15" caso contrário
@@ -2684,7 +2736,7 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
     if call_score >= effective_score_min and (call_score - put_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("call", velas):
             return None
-        elif tf_min == 1 and not _m1_structural_filter("call", velas):
+        elif tf_min == 15 and not _m15_structural_filter("call", velas):
             return None
         return {
             "pattern_name": "ReversalV15_CALL",
@@ -2700,7 +2752,7 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
     if put_score >= effective_score_min and (put_score - call_score) >= v15_gap_min:
         if tf_min == 5 and not _m5_extreme_filter("put", velas):
             return None
-        elif tf_min == 1 and not _m1_structural_filter("put", velas):
+        elif tf_min == 15 and not _m15_structural_filter("put", velas):
             return None
         return {
             "pattern_name": "ReversalV15_PUT",
@@ -2717,16 +2769,16 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
     # ── Fallback v14: Harami / Hammer / Engolfo / Pinça ───────────────────
     _best_score = max(call_score, put_score)
     # Em modo sniper o fallback também usa score mínimo elevado (fallback_arm_score_min)
-    _fallback_score_min = fallback_arm_score_min_tf if sniper_mode_tf else V15_FALLBACK_NEAR_SCORE_M1
-    _fallback_m1_ok = (tf_min != 1) or (_best_score >= _fallback_score_min)
+    _fallback_score_min = fallback_arm_score_min_tf if sniper_mode_tf else V15_FALLBACK_NEAR_SCORE_M15
+    _fallback_m15_ok = (tf_min != 15) or (_best_score >= _fallback_score_min)
 
     # Fallback em modo sniper: execução via arm_sniper (entrada na abertura da próxima vela)
     _score_components_fb = {**_score_components, "pattern_mode": _pattern_mode_tag, "strategy": "fallback"}
 
     if is_harami_bearish(c_prev, c_last) or is_engulfing_bearish(c_prev, c_last) or is_tweezer_top(c_prev, c_last):
-        if not _fallback_m1_ok:
+        if not _fallback_m15_ok:
             return None
-        if tf_min == 1 and not _m1_structural_filter("put", velas):
+        if tf_min == 15 and not _m15_structural_filter("put", velas):
             return None
         pat = "HaramiBearish" if is_harami_bearish(c_prev, c_last) else \
               ("EngolfoBearish" if is_engulfing_bearish(c_prev, c_last) else "TweezerTop")
@@ -2741,9 +2793,9 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             **_score_components_fb,
         }
     if is_harami_bullish(c_prev, c_last) or is_engulfing_bullish(c_prev, c_last) or is_tweezer_bottom(c_prev, c_last):
-        if not _fallback_m1_ok:
+        if not _fallback_m15_ok:
             return None
-        if tf_min == 1 and not _m1_structural_filter("call", velas):
+        if tf_min == 15 and not _m15_structural_filter("call", velas):
             return None
         pat = "HaramiBullish" if is_harami_bullish(c_prev, c_last) else \
               ("EngolfoBullish" if is_engulfing_bullish(c_prev, c_last) else "TweezerBottom")
@@ -2758,9 +2810,9 @@ def check_patterns(tf_min: int, velas: List[Dict[str, Any]]) -> Optional[Dict[st
             **_score_components_fb,
         }
     if is_hammer(c_last):
-        if not _fallback_m1_ok:
+        if not _fallback_m15_ok:
             return None
-        if tf_min == 1 and not _m1_structural_filter("call", velas):
+        if tf_min == 15 and not _m15_structural_filter("call", velas):
             return None
         return {
             "pattern_name": "Hammer",
@@ -2784,7 +2836,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
       Requer V15_CONFIRM_POLLS polls consecutivos onde o preço confirma
       a direção prevista.
 
-      Para M1: usa margem dinâmica baseada no ATR (preço > fechamento + ATR*0.1
+      Para M15: usa margem dinâmica baseada no ATR (preço > fechamento + ATR*0.1
       para call, preço < fechamento - ATR*0.1 para put), reduzindo falsos
       confirmações por ruído/micro-oscilação.
 
@@ -2840,7 +2892,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
 
         # Vela alvo confirmada pelo feed — calcular secs_from_open com base no
         # open_time REAL da vela (mais robusto que now_server - ECF com drift).
-        _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+        _sniper_win = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M15
         candle_open_ts = latest_candle_from  # == expected_confirm_from neste ponto
         secs_from_open = now_server - candle_open_ts
         if secs_from_open > _sniper_win:
@@ -2871,7 +2923,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
             return "waiting", None
 
         # Anti-fakeout opcional (por TF): não violar extremo da vela anterior
-        _afe_extreme = SNIPER_ANTIFAKEOUT_EXTREME_M5 if tf_min == 5 else SNIPER_ANTIFAKEOUT_EXTREME_M1
+        _afe_extreme = SNIPER_ANTIFAKEOUT_EXTREME_M5 if tf_min == 5 else SNIPER_ANTIFAKEOUT_EXTREME_M15
         if _afe_extreme:
             c_pat = _find_candle_by_from(velas, pattern_from)
             if c_pat is not None:
@@ -2906,9 +2958,9 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
 
         c_price = float(c_confirm.get("close", c_confirm.get("open", p_ref)))
 
-        # Para M1: usa margem dinâmica proporcional ao ATR (buffer anti-ruído)
+        # Para M15: usa margem dinâmica proporcional ao ATR (buffer anti-ruído)
         # Para M5: comparação direta com fechamento (comportamento original)
-        if tf_min == 1:
+        if tf_min == 15:
             atr = calculate_atr_from_candles(velas, periodo=ATR_PERIOD)
             price_buffer = (atr * 0.1) if atr is not None else 0.0
             confirmed_now = (direction_hint == "call" and c_price > p_ref + price_buffer) or \
@@ -2917,7 +2969,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
             confirmed_now = (direction_hint == "call" and c_price > p_ref) or \
                             (direction_hint == "put" and c_price < p_ref)
 
-        confirm_polls_needed = V15_CONFIRM_POLLS_M5 if tf_min == 5 else V15_CONFIRM_POLLS_M1
+        confirm_polls_needed = V15_CONFIRM_POLLS_M5 if tf_min == 5 else V15_CONFIRM_POLLS_M15
         if confirmed_now:
             pending["v15_confirm_count"] = pending.get("v15_confirm_count", 0) + 1
             if pending["v15_confirm_count"] >= confirm_polls_needed:
@@ -2942,7 +2994,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
         c_price = float(c_confirm.get("close", c_confirm.get("open", p_ref)))
         confirmed_now = (direction_hint == "call" and c_price > p_ref) or \
                         (direction_hint == "put" and c_price < p_ref)
-        confirm_polls_needed = RESPIRO_CONFIRM_POLLS_M5 if tf_min == 5 else RESPIRO_CONFIRM_POLLS_M1
+        confirm_polls_needed = RESPIRO_CONFIRM_POLLS_M5 if tf_min == 5 else RESPIRO_CONFIRM_POLLS_M15
         if confirmed_now:
             pending["v15_confirm_count"] = pending.get("v15_confirm_count", 0) + 1
             if pending["v15_confirm_count"] >= confirm_polls_needed:
@@ -2980,7 +3032,7 @@ def confirm_pending(tf_min: int, pending: Dict[str, Any], velas: List[Dict[str, 
 # =========================
 def within_entry_window(tf_min: int) -> Tuple[bool, int, int]:
     period = tf_min * 60
-    window = ENTRY_WINDOW_SECONDS_M5 if tf_min == 5 else ENTRY_WINDOW_SECONDS_M1
+    window = ENTRY_WINDOW_SECONDS_M5 if tf_min == 5 else ENTRY_WINDOW_SECONDS_M15
     now_s = get_now_ts()
     sec = int(now_s % period)
     return sec <= window, sec, window
@@ -3310,13 +3362,12 @@ def _apply_rigidez():
     """Estratégia única: PRIORIDADE DIGITAL — parâmetros ajustáveis no topo do script.
 
     RIGIDEZ_MODE = "normal" → usa os parâmetros definidos no bloco de ajuste fino acima.
-    RIGIDEZ_MODE = "rigida" → aplica multiplicadores M5 (uso avançado / backtesting).
-    Perfil M1 único: parâmetros "livres" definidos no bloco centralizados no topo.
+    RIGIDEZ_MODE = "rigida" → aplica multiplicadores M5/M15 (uso avançado / backtesting).
     Para experimentar variações, edite diretamente os valores no bloco
     "ESTRATÉGIA: PRIORIDADE DIGITAL — AJUSTE FINO AQUI" no início deste arquivo.
     """
-    global ADX_MIN_M1, ADX_MIN_M5, BB_WIDTH_MIN_M1, BB_WIDTH_MIN_M5, SLOPE_MIN_M1, SLOPE_MIN_M5
-    global ENTRY_WINDOW_SECONDS_M1, ENTRY_WINDOW_SECONDS_M5
+    global ADX_MIN_M15, ADX_MIN_M5, BB_WIDTH_MIN_M15, BB_WIDTH_MIN_M5, SLOPE_MIN_M15, SLOPE_MIN_M5
+    global ENTRY_WINDOW_SECONDS_M15, ENTRY_WINDOW_SECONDS_M5
     global ATR_ADAPTIVE_FACTOR
     if RIGIDEZ_MODE != "rigida":
         return  # Estratégia normal: parâmetros já definidos no bloco de ajuste fino
@@ -3326,11 +3377,11 @@ def _apply_rigidez():
     SLOPE_MIN_M5 *= 1.25
     ENTRY_WINDOW_SECONDS_M5 = min(ENTRY_WINDOW_SECONDS_M5, 25)
     ATR_ADAPTIVE_FACTOR = max(ATR_ADAPTIVE_FACTOR, 0.85)
-    if TIMEFRAME_MINUTES != 1:
-        ADX_MIN_M1 += 2.0
-        BB_WIDTH_MIN_M1 *= 1.20
-        SLOPE_MIN_M1 *= 1.25
-        ENTRY_WINDOW_SECONDS_M1 = min(ENTRY_WINDOW_SECONDS_M1, 6)
+    # Modo rígido M15
+    ADX_MIN_M15 += 2.0
+    BB_WIDTH_MIN_M15 *= 1.20
+    SLOPE_MIN_M15 *= 1.25
+    ENTRY_WINDOW_SECONDS_M15 = min(ENTRY_WINDOW_SECONDS_M15, 30)
 
 
 # =========================
@@ -3781,14 +3832,17 @@ def rank_assets_by_regime(
 ) -> List[Tuple[str, str]]:
     """Ranqueia ativos por qualidade de regime (ATR + ADX + BBW) e retorna os top_n.
 
-    Usado no M1 para selecionar dinamicamente os ativos mais promissores a cada
-    ciclo de re-ranking, reduzindo tempo gasto em ativos laterais/comprimidos.
+    Usado no M15 (e M5) para selecionar dinamicamente os ativos mais promissores
+    a cada ciclo de re-ranking, reduzindo tempo gasto em ativos laterais/comprimidos.
 
     Estratégia de pontuação (normalizado pelo mínimo exigido):
       score = atr_ratio/ATR_MIN + adx/ADX_MIN + bbw/BB_MIN
     Quanto maior o score, melhor o regime do ativo naquele momento.
     """
     scored: List[Tuple[float, str, str]] = []
+    _atr_min = ATR_MIN_RATIO_ABS_M5 if tf_min == 5 else ATR_MIN_RATIO_ABS_M15
+    _adx_min = ADX_MIN_M5 if tf_min == 5 else ADX_MIN_M15
+    _bbw_min = BB_WIDTH_MIN_M5 if tf_min == 5 else BB_WIDTH_MIN_M15
     for ativo, cat in candidates:
         try:
             period = tf_min * 60
@@ -3806,14 +3860,14 @@ def rank_assets_by_regime(
             atr = calculate_atr_from_candles(velas, periodo=ATR_PERIOD)
             mean_close = (sum(closes[-ATR_PERIOD:]) / ATR_PERIOD
                           if len(closes) >= ATR_PERIOD else closes[-1])
-            atr_score = (atr / mean_close / max(ATR_MIN_RATIO_ABS_M1, 1e-12)
+            atr_score = (atr / mean_close / max(_atr_min, 1e-12)
                          if (atr and mean_close > 0) else 0.0)
 
             adx = adx_from_candles(velas, period=ADX_PERIOD) or 0.0
-            adx_score = adx / max(ADX_MIN_M1, 1e-3)
+            adx_score = adx / max(_adx_min, 1e-3)
 
             bbw = bb_width_norm(closes, period=BB_PERIOD, std_mult=BB_STD) or 0.0
-            bbw_score = bbw / max(BB_WIDTH_MIN_M1, 1e-12)
+            bbw_score = bbw / max(_bbw_min, 1e-12)
 
             score = atr_score + adx_score + bbw_score
             scored.append((score, ativo, cat))
@@ -4053,18 +4107,18 @@ def _startup_rank_m5_pool(
 def ask_num_assets(tf_min: int = 5) -> int:
     """Pergunta quantos ativos operar simultaneamente, respeitando o cap por TF.
 
-    Limites configuráveis (config.txt [M1].max_assets / [M5].max_assets):
-    - M1 → máximo 2 ativos (janela curta; menos é mais preciso)
-    - M5 → máximo 4 ativos (janela maior permite monitorar mais ativos)
+    Limites configuráveis (config.txt [M15].max_assets / [M5].max_assets):
+    - M15 → máximo 3 ativos (candle lento; foco e qualidade)
+    - M5  → máximo 4 ativos (janela maior permite monitorar mais ativos)
     """
-    max_cap = MAX_ASSETS_M1 if tf_min == 1 else MAX_ASSETS_M5
+    max_cap = MAX_ASSETS_M15 if tf_min == 15 else MAX_ASSETS_M5
     suggested = max_cap
     print("\n" + "=" * 70)
     print("📊 NÚMERO DE ATIVOS SIMULTÂNEOS")
     print("=" * 70)
     print(f"  Escolha quantos ativos operar ao mesmo tempo (1 a {max_cap}).")
-    if tf_min == 1:
-        print(cyellow(f"  💡 M1: máximo {max_cap} ativo(s) — janela de entrada curta."))
+    if tf_min == 15:
+        print(cbold(f"  💡 M15: máximo {max_cap} ativo(s) — candle lento; foco na qualidade."))
     else:
         print(ccyan(f"  💡 M5: máximo {max_cap} ativo(s) — janela de entrada maior."))
     while True:
@@ -4101,14 +4155,18 @@ def ask_timeframe():
     print("\n" + "=" * 70)
     print("⏱️  TIMEFRAME")
     print("=" * 70)
-    print("  1) M1")
-    print("  2) M5")
+    print("  1) " + ccyan("M5")  + "   — 5 minutos  (timeframe principal de entrada)")
+    print("  2) " + cbold("M15") + "  — 15 minutos (timeframe lento / contexto + entrada)")
+    print()
+    print("  Dica: M5 é o padrão recomendado. M15 oferece sinais mais lentos")
+    print("        e filtros mais rígidos — ideal como confirmação de tendência.")
     while True:
         r = input("\n👉 Digite 1 ou 2 [1]: ").strip() or "1"
         if r == "1":
-            return 1
-        if r == "2":
             return 5
+        if r == "2":
+            return 15
+        print("❌ Opção inválida! Digite 1 (M5) ou 2 (M15).")
 
 
 def ask_entry_mode():
@@ -4499,7 +4557,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
     global pending, pending_id_active, pending_lock_until_ts, _last_pending_status_printed_for_id
 
     period = tf_min * 60
-    expiration = 1 if tf_min == 1 else 5
+    expiration = 15 if tf_min == 15 else 5
 
     # Aguardar horário agendado
     if start_timestamp is not None and start_timestamp > time.time():
@@ -4584,16 +4642,16 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
 
         if not ativo_aberto(ativo, chave_preferida=ativo_chave):
             _log_blocked("asset_closed", f"tf={tf_min}")
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
             continue
 
         velas = get_candles_safe(ativo, period, CANDLES_LOOKBACK)
         if not velas or len(velas) < MIN_CANDLES_REQUIRED:
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
             continue
 
         if not passes_all_regime_filters(tf_min, velas):
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
             continue
 
         if pending is not None and pending_id_active is not None:
@@ -4604,7 +4662,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
             status, direction = confirm_pending(tf_min, pending, velas)
 
             if status == "waiting":
-                time.sleep(PENDING_SLEEP_S_M5 if tf_min == 5 else PENDING_SLEEP_S_M1)
+                time.sleep(PENDING_SLEEP_S_M5 if tf_min == 5 else PENDING_SLEEP_S_M15)
                 continue
 
             if status in ("expired", "rejected", "error"):
@@ -4697,14 +4755,14 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
                 while time.time() - t0 < min_wait:
                     time.sleep(0.5)
 
-                timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
+                timeout = M5_RESULT_TIMEOUT if expiration == 5 else M15_RESULT_TIMEOUT
                 timeout = max(35, timeout)
 
                 result = check_order_result(
                     order_id, amount_to_use,
                     saldo_before=saldo_before,
                     timeout_seconds=timeout,
-                    poll_interval=2.0 if expiration == 5 else 1.5
+                    poll_interval=2.0 if expiration >= 5 else 1.5
                 )
 
                 label = result.get("result", "unknown")
@@ -4742,12 +4800,12 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
                 continue
 
         if now_server < pending_lock_until_ts:
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
             continue
 
         sig = check_patterns(tf_min, velas)
         if not sig:
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
             continue
 
         patt = sig["pattern_name"]
@@ -4764,7 +4822,7 @@ def loop_patterns(ativo: str, ativo_chave: str, tf_min: int, runtime_seconds: Op
         pending = sig
         pending_id_active = pend_id
         pending_lock_until_ts = int(sig["expected_confirm_from"]) + (period * 1)
-        time.sleep(PENDING_SLEEP_S_M5 if tf_min == 5 else PENDING_SLEEP_S_M1)
+        time.sleep(PENDING_SLEEP_S_M5 if tf_min == 5 else PENDING_SLEEP_S_M15)
 
     print("✅ Loop finalizado.")
 
@@ -4800,10 +4858,10 @@ def loop_patterns_multi(
 
     period = tf_min * 60
     expiration = tf_min
-    # M1: limita automaticamente a no máximo 4 ativos simultâneos para melhor foco
-    _m1_max_ativos = 4
-    if tf_min == 1:
-        _max_ativos = min(max_ativos, _m1_max_ativos) if max_ativos > 0 else _m1_max_ativos
+    # M15: limita automaticamente a no máximo MAX_ASSETS_M15 ativos simultâneos (foco e qualidade)
+    _m15_max_ativos = MAX_ASSETS_M15
+    if tf_min == 15:
+        _max_ativos = min(max_ativos, _m15_max_ativos) if max_ativos > 0 else _m15_max_ativos
     else:
         _max_ativos = max_ativos if max_ativos > 0 else len(ativos)
 
@@ -4861,9 +4919,9 @@ def loop_patterns_multi(
 
     # Controle do recheck por candle
     last_recheck_cid: int = -1
-    # Controle de re-ranking para M1 (a cada 15 minutos)
-    M1_RANK_INTERVAL_S = 900  # re-rankeia ativos M1 a cada 15 minutos
-    _last_m1_rank_ts: float = 0.0
+    # Controle de re-ranking para M15 (a cada 30 minutos — candle mais lento)
+    M15_RANK_INTERVAL_S = 1800  # re-rankeia ativos M15 a cada 30 minutos
+    _last_m15_rank_ts: float = 0.0
     # Controle de refresh do pool M5 (sem dynamic pool): a cada 10 minutos
     # recalcula os candidatos e substitui ativos que saíram da lista aberta.
     M5_REFRESH_INTERVAL_S = 600  # refresh M5 pool a cada 10 minutos
@@ -4872,29 +4930,29 @@ def loop_patterns_multi(
     def _refill_pool(now_cid: int) -> None:
         """Re-verifica o pool completo e adiciona ativos disponíveis.
 
-        Para M1: aplica ranking por ATR+ADX+BBW a cada M1_RANK_INTERVAL_S segundos,
+        Para M15: aplica ranking por ATR+ADX+BBW a cada M15_RANK_INTERVAL_S segundos,
         mantendo apenas os ativos com melhor regime de mercado no pool ativo.
         Para M5 (sem dynamic pool): refresca o pool a cada M5_REFRESH_INTERVAL_S
         substituindo ativos que fecharam ou saíram da lista de candidatos abertos.
         """
-        nonlocal last_recheck_cid, active_ativos, _last_m1_rank_ts, _last_m5_refresh_ts
+        nonlocal last_recheck_cid, active_ativos, _last_m15_rank_ts, _last_m5_refresh_ts
         if now_cid == last_recheck_cid:
             return
         last_recheck_cid = now_cid
 
         try:
-            # ← Filtra candidatos por timeframe (M1/M5) e prioridade digital
+            # ← Filtra candidatos por timeframe (M15/M5) e prioridade digital
             candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min,
                                               allow_open_market=allow_open_market)
         except Exception as exc:
             _log_error("Falha ao buscar pool de candidatos em _refill_pool.", exc)
             return
 
-        if tf_min == 1:
-            # M1: re-ranking periódico — seleciona top _max_ativos por qualidade de regime
+        if tf_min == 15:
+            # M15: re-ranking periódico — seleciona top _max_ativos por qualidade de regime
             now_t = time.time()
-            if now_t - _last_m1_rank_ts >= M1_RANK_INTERVAL_S or not active_ativos:
-                _last_m1_rank_ts = now_t
+            if now_t - _last_m15_rank_ts >= M15_RANK_INTERVAL_S or not active_ativos:
+                _last_m15_rank_ts = now_t
                 # Preserva ativos com pending ativo no ranking para não cortar sinais em andamento
                 pending_ativos = {a for a, _ in active_ativos
                                   if per_asset_pending.get(a) is not None}
@@ -4906,7 +4964,7 @@ def loop_patterns_multi(
                 if removed:
                     active_ativos = [(a, c) for a, c in active_ativos if a not in removed]
                     console_event(
-                        f"🔄 Re-ranking M1: removidos do pool: "
+                        f"🔄 Re-ranking M15: removidos do pool: "
                         + ", ".join(display_asset_name(a) for a in removed)
                     )
                 # Adiciona ativos do ranking que ainda não estão no pool
@@ -4981,7 +5039,7 @@ def loop_patterns_multi(
         )
         active_names = {a.upper() for a, _ in active_ativos}
         try:
-            # ← Filtra candidatos por timeframe (M1/M5) e prioridade digital
+            # ← Filtra candidatos por timeframe (M15/M5) e prioridade digital
             candidates = build_candidate_pool(use_otc=use_otc, tf_min=tf_min,
                                               allow_open_market=allow_open_market)
         except Exception as exc:
@@ -5312,7 +5370,7 @@ def loop_patterns_multi(
                 f"⏳ Nenhum ativo da lista Ativos.txt está aberto para o timeframe M{tf_min} "
                 "escolhido. Aguardando abertura..."
             )
-            idle_sleep = IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1
+            idle_sleep = IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15
             time.sleep(idle_sleep * EMPTY_POOL_SLEEP_MULTIPLIER)
             continue
 
@@ -5610,6 +5668,19 @@ def loop_patterns_multi(
             if not sig:
                 continue
 
+            # M15 context filter: quando operando em M5 com filtro habilitado,
+            # verifica se a tendência M15 confirma a direção do sinal M5.
+            # Sinais "neutro" (M15 lateral) não bloqueiam — apenas direções opostas.
+            if tf_min == 5 and M15_CONTEXT_FILTER_ENABLE:
+                _m15_dir = _get_m15_context(ativo)
+                _sig_dir = sig.get("direction_hint", "")
+                if _m15_dir != 'neutral' and _sig_dir:
+                    _m15_expected = "call" if _m15_dir == 'up' else "put"
+                    if _sig_dir != _m15_expected:
+                        _log_blocked('m15_context_filter',
+                                     f"M15={_m15_dir} vs sinal={_sig_dir} ativo={ativo}")
+                        continue
+
             patt = sig["pattern_name"]
             patt_from = int(sig["pattern_from"])
             new_pend_id = (patt, patt_from, ativo, tf_min)
@@ -5634,7 +5705,7 @@ def loop_patterns_multi(
 
         # Best-signal selection: when multiple signals are confirmed simultaneously in M5,
         # choose the ONE with the highest V15 score (tiebreak: fewest seconds into candle).
-        # For M1 (fast TF) all confirmed signals are allowed (max 2 assets anyway).
+        # For M15 (slower TF) all confirmed signals are allowed (max 3 assets per MAX_ASSETS_M15).
         if confirmed_this_cycle:
             if tf_min == 5 and len(confirmed_this_cycle) > 1:
                 # Sort: highest v15_score first, then lowest sec_in_candle (closest to open)
@@ -5665,7 +5736,7 @@ def loop_patterns_multi(
             if _bs_pend_mode == "arm_sniper":
                 _ecf_buy = int(_bs_pend.get("expected_confirm_from", 0))
                 _secs_in_at_buy = now_server - _ecf_buy
-                _sniper_win_buy = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+                _sniper_win_buy = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M15
                 if _secs_in_at_buy > _sniper_win_buy:
                     _log_blocked(
                         "sniper_window_expired_at_buy",
@@ -5756,7 +5827,7 @@ def loop_patterns_multi(
                             if _bs_pend_mode == "arm_sniper":
                                 _ecf_fb = int(_bs_pend.get("expected_confirm_from", 0))
                                 _secs_fb = now_server - _ecf_fb
-                                _sniper_win_fb = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M1
+                                _sniper_win_fb = SNIPER_WINDOW_SECONDS_M5 if tf_min == 5 else SNIPER_WINDOW_SECONDS_M15
                                 if _secs_fb > _sniper_win_fb:
                                     _log_blocked(
                                         "sniper_window_expired_at_fallback_buy",
@@ -5815,7 +5886,7 @@ def loop_patterns_multi(
                     while time.time() - t0 < min_wait:
                         time.sleep(0.5)
 
-                    timeout = M5_RESULT_TIMEOUT if expiration == 5 else M1_RESULT_TIMEOUT
+                    timeout = M5_RESULT_TIMEOUT if expiration == 5 else M15_RESULT_TIMEOUT
                     timeout = max(35, timeout)
 
                     result = check_order_result(
@@ -5876,7 +5947,7 @@ def loop_patterns_multi(
         if freeze_active:
             time.sleep(PENDING_FREEZE_POLL_SLEEP_M5)
         else:
-            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M1)
+            time.sleep(IDLE_SLEEP_S_M5 if tf_min == 5 else IDLE_SLEEP_S_M15)
 
     print(f"✅ Loop multi-ativo finalizado. Entradas aceitas: {entries_accepted}")
 
@@ -5917,13 +5988,12 @@ if __name__ == '__main__':
     conta_label = ccyan("DEMO") if conta == 'PRACTICE' else cyellow("REAL")
     print(f"✅ Conta selecionada: {conta_label}")
 
-    # Timeframe (M1 ou M5)
+    # Timeframe (M5 ou M15)
     TIMEFRAME_MINUTES = ask_timeframe()
 
     # Tipo de mercado
-    # M5: seleção interativa de perfil (OTC / OPEN / MISTO) com carregamento de thresholds
-    # M1: seleção interativa (OTC ou Mercado Aberto)
-    if TIMEFRAME_MINUTES == 5:
+    # M5 e M15: seleção interativa de perfil (OTC / OPEN / MISTO) com carregamento de thresholds
+    if TIMEFRAME_MINUTES in (5, 15):
         use_otc, allow_open_market, active_profile = ask_market_profile_m5()
         if use_otc and allow_open_market:
             market_label = "OTC + Mercado Aberto (misto)"
@@ -5931,13 +6001,13 @@ if __name__ == '__main__':
             market_label = "OTC"
         else:
             market_label = "Mercado Aberto"
-        print(f"\n🌍 M5 Mercado (perfil {active_profile}): {market_label}")
+        tf_label_market = f"M{TIMEFRAME_MINUTES}"
+        print(f"\n🌍 {tf_label_market} Mercado (perfil {active_profile}): {market_label}")
         if not use_otc and not allow_open_market:
             print("\n⚠️  AVISO: nenhum mercado habilitado — verifique [PROFILE_*] no config.txt.")
             sys.exit(1)
     else:
         use_otc = ask_market_type()
-        # M1 usa seleção exclusiva: OTC OU mercado aberto, nunca os dois simultaneamente.
         allow_open_market = not use_otc
         market_label = "OTC" if use_otc else "Mercado Aberto"
         active_profile = "OTC" if use_otc else "OPEN"
@@ -5954,7 +6024,7 @@ if __name__ == '__main__':
         print("  Para habilitar OTC em conta real, edite config.txt:")
         print("    [MARKET]")
         print("    allow_otc_live = true")
-        if TIMEFRAME_MINUTES == 5:
+        if TIMEFRAME_MINUTES in (5, 15):
             print("  Ou selecione o perfil OPEN no próximo início.")
         print("=" * 70)
         sys.exit(1)
@@ -5979,7 +6049,7 @@ if __name__ == '__main__':
     # Isso é intencional: o menu dá controle explícito a cada execução.
     ENTRY_MODE = ask_entry_mode()
     # Aplica modo selecionado para ambas as TFs na sessão atual
-    ENTRY_MODE_M1 = ENTRY_MODE
+    ENTRY_MODE_M15 = ENTRY_MODE
     ENTRY_MODE_M5 = ENTRY_MODE
 
     # Estratégia única: PRIORIDADE DIGITAL
@@ -5987,15 +6057,12 @@ if __name__ == '__main__':
     _apply_rigidez()
 
     # Inicializar paths de log com tag automática (antes do ranking para logar seleção)
-    if TIMEFRAME_MINUTES == 5:
-        if use_otc and allow_open_market:
-            market_tag = "misto"
-        elif use_otc:
-            market_tag = "otc"
-        else:
-            market_tag = "op"
+    if use_otc and allow_open_market:
+        market_tag = "misto"
+    elif use_otc:
+        market_tag = "otc"
     else:
-        market_tag = "otc" if use_otc else "op"
+        market_tag = "op"
     auto_tag = f"m{TIMEFRAME_MINUTES}_{market_tag}_{max_ativos}ativos"
     _init_paths_with_tag(auto_tag)
     _ensure_csv_headers()
@@ -6093,10 +6160,11 @@ if __name__ == '__main__':
     print(f'Conta: {"DEMO" if conta == "PRACTICE" else "REAL"} | Mercado: {market_label}')
     otc_live_status = "permitido" if ALLOW_OTC_LIVE else "BLOQUEADO (somente demo)"
     print(f'OTC em conta real: {otc_live_status}')
-    if TIMEFRAME_MINUTES == 5:
+    if TIMEFRAME_MINUTES in (5, 15):
         _m5_otc_flag = "on" if M5_ALLOW_OTC else "off"
         _m5_op_flag = "on" if M5_ALLOW_OPEN_MARKET else "off"
-        print(f'M5 Perfil: {active_profile} | m5_allow_otc={_m5_otc_flag} | m5_allow_open_market={_m5_op_flag}')
+        _tf_prof_label = f"M{TIMEFRAME_MINUTES}"
+        print(f'{_tf_prof_label} Perfil: {active_profile} | m5_allow_otc={_m5_otc_flag} | m5_allow_open_market={_m5_op_flag}')
     modo_label = "REVERSÃO (V15)" if ENTRY_MODE == "reversal" else "CONTINUAÇÃO (Respiro)"
     print(f'Timeframe: M{TIMEFRAME_MINUTES} | Modo: {modo_label} | Carteira: Ativos.txt')
     print(f'Prioridade: [DIGITAL M{TIMEFRAME_MINUTES}] → [BINARIA M{TIMEFRAME_MINUTES}] (fallback apenas se faltar digital aberta)')
@@ -6115,32 +6183,32 @@ if __name__ == '__main__':
     agendamento_label = "imediato" if agendamento_ts is None else datetime.fromtimestamp(agendamento_ts).strftime("%H:%M:%S")
     entries_label = str(MAX_ENTRIES) if MAX_ENTRIES > 0 else "ilimitado"
     print(f'Agendamento: {agendamento_label} | Entradas máx: {entries_label}')
-    _sm1 = V15_SCORE_MIN_M1
+    _sm15 = V15_SCORE_MIN_M15
     _sm5 = V15_SCORE_MIN_M5
-    print(f'V15_SCORE_MIN: M1={_sm1} M5={_sm5} | V15_CONFIRM_POLLS: M1={V15_CONFIRM_POLLS_M1} M5={V15_CONFIRM_POLLS_M5}')
-    print(f'ADX_M1={ADX_MIN_M1:.1f} ADX_M5={ADX_MIN_M5:.1f} | BB_M1={BB_WIDTH_MIN_M1:.5f} BB_M5={BB_WIDTH_MIN_M5:.5f}')
-    print(f'ENTRY_WINDOW: M1={ENTRY_WINDOW_SECONDS_M1}s M5={ENTRY_WINDOW_SECONDS_M5}s')
-    _ke_m1 = "on" if KELTNER_ENABLE_M1 else "off"
+    print(f'V15_SCORE_MIN: M15={_sm15} M5={_sm5} | V15_CONFIRM_POLLS: M15={V15_CONFIRM_POLLS_M15} M5={V15_CONFIRM_POLLS_M5}')
+    print(f'ADX_M15={ADX_MIN_M15:.1f} ADX_M5={ADX_MIN_M5:.1f} | BB_M15={BB_WIDTH_MIN_M15:.5f} BB_M5={BB_WIDTH_MIN_M5:.5f}')
+    print(f'ENTRY_WINDOW: M15={ENTRY_WINDOW_SECONDS_M15}s M5={ENTRY_WINDOW_SECONDS_M5}s')
+    _ke_m15 = "on" if KELTNER_ENABLE_M15 else "off"
     _ke_m5 = "on" if KELTNER_ENABLE_M5 else "off"
-    _pe_m1 = "on" if PIVOT_ENABLE_M1 else "off"
+    _pe_m15 = "on" if PIVOT_ENABLE_M15 else "off"
     _pe_m5 = "on" if PIVOT_ENABLE_M5 else "off"
-    _re_m1 = "on" if RESPIRO_ENABLE_M1 else "off"
+    _re_m15 = "on" if RESPIRO_ENABLE_M15 else "off"
     _re_m5 = "on" if RESPIRO_ENABLE_M5 else "off"
-    print(f'Keltner: M1={_ke_m1} M5={_ke_m5} | Pivot: M1={_pe_m1} M5={_pe_m5} | Respiro: M1={_re_m1} M5={_re_m5}')
-    _snm1 = "ATIVO" if SNIPER_MODE_M1 else "off"
+    print(f'Keltner: M15={_ke_m15} M5={_ke_m5} | Pivot: M15={_pe_m15} M5={_pe_m5} | Respiro: M15={_re_m15} M5={_re_m5}')
+    _snm15 = "ATIVO" if SNIPER_MODE_M15 else "off"
     _snm5 = "ATIVO" if SNIPER_MODE_M5 else "off"
-    if SNIPER_MODE_M1 or SNIPER_MODE_M5:
+    if SNIPER_MODE_M15 or SNIPER_MODE_M5:
         _af_label = (
-            f"antifakeout_extreme: M1={'on' if SNIPER_ANTIFAKEOUT_EXTREME_M1 else 'off'} "
+            f"antifakeout_extreme: M15={'on' if SNIPER_ANTIFAKEOUT_EXTREME_M15 else 'off'} "
             f"M5={'on' if SNIPER_ANTIFAKEOUT_EXTREME_M5 else 'off'}"
         )
         print(
-            f'ARM+SNIPER: M1={_snm1}(arm≥{ARM_SCORE_MIN_M1}/fb≥{FALLBACK_ARM_SCORE_MIN_M1}/win={SNIPER_WINDOW_SECONDS_M1}s) '
+            f'ARM+SNIPER: M15={_snm15}(arm≥{ARM_SCORE_MIN_M15}/fb≥{FALLBACK_ARM_SCORE_MIN_M15}/win={SNIPER_WINDOW_SECONDS_M15}s) '
             f'M5={_snm5}(arm≥{ARM_SCORE_MIN_M5}/fb≥{FALLBACK_ARM_SCORE_MIN_M5}/win={SNIPER_WINDOW_SECONDS_M5}s) '
             f'{_af_label}'
         )
     else:
-        print(f'ARM+SNIPER: M1={_snm1} M5={_snm5} (modo padrão V15 confirm-pending)')
+        print(f'ARM+SNIPER: M15={_snm15} M5={_snm5} (modo padrão V15 confirm-pending)')
     if TIMEFRAME_MINUTES == 5 and M5_POOL_DYNAMIC_ENABLE:
         _scale_label = f"univ_div={M5_POOL_SWAP_UNIVERSE_DIVISOR} max_abs={M5_POOL_SWAP_MAX_ABS}" if M5_POOL_SWAP_SCALE_WITH_UNIVERSE else "scale=off"
         _don_label = f"don={M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD}c@{M5_POOL_DEAD_MARKET_RANGE_RATIO_THR:.3f} pen={M5_POOL_DEAD_MARKET_PENALTY:.1f}" if M5_POOL_DEAD_MARKET_DONCHIAN_PERIOD > 0 else "donchian=off"
@@ -6153,6 +6221,8 @@ if __name__ == '__main__':
         )
     elif TIMEFRAME_MINUTES == 5:
         print('Pool Dinâmico M5: desativado (pool_dynamic_enable=false)')
+    if M15_CONTEXT_FILTER_ENABLE:
+        print(f'Filtro M15 para M5: ATIVO | lookback={M15_CONTEXT_LOOKBACK_CANDLES} velas M15')
     print(f'Logs: {LOG_DIR.as_posix()}/ | State: {STATE_DIR.as_posix()}/')
     if SINAIS_CONFIRMADOS_LOG is not None:
         print(f'Sinais confirmados (ordens aceitas): {SINAIS_CONFIRMADOS_LOG.as_posix()}')
