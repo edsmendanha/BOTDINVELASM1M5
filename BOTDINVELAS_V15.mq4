@@ -1581,9 +1581,9 @@ void ExportCSV(datetime sigTime, string status, string dir,
       if(h == INVALID_HANDLE) { Print("V15 CSV: erro ao criar arquivo."); return; }
       // Escreve cabecalho na primeira vez
       FileWriteString(h,
-         "local_time,timestamp,symbol,timeframe,status,direction,call_score,put_score,"
+         "timestamp,symbol,timeframe,status,direction,call_score,put_score,"
          "pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural,"
-         "volume_ok,session_prime,mtf_ok,divergence_bonus\n");
+         "volume_ok,session_prime,mtf_ok,divergence_bonus,local_time\n");
      }
 
    // Calcula horario local do usuario
@@ -1591,8 +1591,7 @@ void ExportCSV(datetime sigTime, string status, string dir,
 
    // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.4)
    string line = StringFormat(
-      "%s,%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d\n",
-      tsLocal,
+      "%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d,%s\n",
       TimeToString(sigTime, TIME_DATE|TIME_SECONDS),
       Symbol(), g_tf, status, dir,
       callScore, putScore, pattern,
@@ -1601,7 +1600,8 @@ void ExportCSV(datetime sigTime, string status, string dir,
       g_armedVolOk?"1":"0",
       g_armedSessionPrime?"1":"0",
       g_armedMtfOk?"1":"0",
-      g_armedDivBonus);
+      g_armedDivBonus,
+      tsLocal);
 
    FileWriteString(h, line);
    FileClose(h);
