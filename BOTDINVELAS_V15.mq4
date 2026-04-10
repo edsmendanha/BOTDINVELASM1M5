@@ -10,9 +10,9 @@
 //+------------------------------------------------------------------+
 #property copyright   "BOTDINVELAS"
 #property link        "https://github.com/edsmendanha/BOTDINVELASM1M5"
-#property version     "15.2"
+#property version     "15.3"
 #property strict
-#property description "Motor V15 Definitivo - Qualidade Maxima | Dois estagios: bolinha->seta/cruz"
+#property description "Motor V15.3 Qualidade Maxima | Volume+Sessao+MTF+Divergencia | Dois estagios"
 
 #property indicator_chart_window
 #property indicator_buffers 14
@@ -124,6 +124,36 @@ input int    Cooldown_Bars_M15 = 3; // Barras de cooldown apos sinal confirmado 
 input int    V15_Fallback_Near_Score = 38;   // Score minimo para fallback M15
 input bool   Fallback_Enable         = true; // Habilitar fallback de padroes
 
+//--- Volume Tick Filter
+input bool   Enable_Volume_Filter = true;   // Habilitar filtro de volume tick
+input int    Volume_Lookback      = 20;     // Janela para calcular media de volume
+input double Volume_Min_Ratio     = 0.60;   // Volume minimo = 60% da media
+
+//--- Filtro de Sessao (horario de mercado)
+input bool   Enable_Session_Filter = true;  // Habilitar filtro de sessao de mercado
+input int    Session_Score_Penalty = 10;    // Penalidade de score fora do horario prime
+input int    Session_London_Start  = 8;     // Inicio sessao Londres (hora UTC)
+input int    Session_London_End    = 12;    // Fim sessao Londres (hora UTC)
+input int    Session_NY_Start      = 13;    // Inicio sessao NY (hora UTC)
+input int    Session_NY_End        = 17;    // Fim sessao NY (hora UTC)
+input int    Session_Asia_Start    = 0;     // Inicio sessao Asia (hora UTC)
+input int    Session_Asia_End      = 3;     // Fim sessao Asia (hora UTC)
+
+//--- Filtro Multi-Timeframe M15->M5 (so aplica no M5)
+input bool   Enable_MTF_Filter    = true;    // Habilitar confirmacao multi-timeframe
+input double MTF_RSI_Block_High   = 65.0;   // RSI M15 acima disto bloqueia CALL no M5
+input double MTF_RSI_Block_Low    = 35.0;   // RSI M15 abaixo disto bloqueia PUT no M5
+input double MTF_Slope_Threshold  = 0.0005; // Inclinacao minima da EMA M15 para bloquear
+
+//--- Divergencia RSI (bonus de score)
+input bool   Enable_RSI_Divergence   = true;  // Habilitar bonus por divergencia RSI
+input int    Divergence_Bonus        = 15;    // Pontos bonus por divergencia confirmada
+input int    Divergence_Lookback     = 10;    // Janela para buscar divergencia (velas)
+input double Divergence_Bull_MaxRSI  = 50.0;  // RSI atual maximo para divergencia bullish
+input double Divergence_Bull_PastRSI = 45.0;  // RSI passado maximo para divergencia bullish
+input double Divergence_Bear_MinRSI  = 50.0;  // RSI atual minimo para divergencia bearish
+input double Divergence_Bear_PastRSI = 55.0;  // RSI passado minimo para divergencia bearish
+
 //--- Visual
 input bool   Candle_Color_Enable = true;           // Colorir velas estilo IQ Option
 input color  Candle_Bull_Color   = C'38,166,154';  // Verde IQ (#26A69A)
@@ -150,13 +180,13 @@ input bool   Alert_Push        = false;       // Push notification
 // BUFFERS DE INDICADOR (14 no total)
 // =======================================================================
 
-// Velas de alta (grupo DRAW_CANDLES, verde IQ)
+// Velas de alta (buffers auxiliares, coloracao gerenciada pelo grafico)
 double BullOpen[];   // buffer 0
 double BullHigh[];   // buffer 1
 double BullLow[];    // buffer 2
 double BullClose[];  // buffer 3
 
-// Velas de baixa (grupo DRAW_CANDLES, vermelho IQ)
+// Velas de baixa (buffers auxiliares, coloracao gerenciada pelo grafico)
 double BearOpen[];   // buffer 4
 double BearHigh[];   // buffer 5
 double BearLow[];    // buffer 6
@@ -210,9 +240,15 @@ string   g_lastSigDir    = "";
 int      g_lastSigScore  = 0;
 string   g_lastSigStatus = ""; // "CONFIRMADO" ou "REJEITADO"
 
+// Estado dos novos filtros de qualidade (definido ao armar, usado no CSV e dashboard)
+bool g_armedVolOk       = true;  // volume acima do minimo no momento do armamento
+bool g_armedSessionPrime= true;  // estava em sessao prime ao armar
+bool g_armedMtfOk       = true;  // MTF M15 nao contradizia a direcao ao armar
+int  g_armedDivBonus    = 0;     // bonus de divergencia RSI aplicado ao score
+
 // Constantes do painel
 #define PANEL_PREFIX "BDV15_"
-#define PANEL_LINES  12
+#define PANEL_LINES  16
 #define LINE_H       15
 #define MIN_BARS     60
 
@@ -228,24 +264,30 @@ int OnInit()
       return(INIT_FAILED);
      }
 
-   // -- Velas de alta (DRAW_CANDLES, verde IQ) -------------------------
+   // -- Velas de alta (DRAW_NONE: buffers auxiliares, sem desenho proprio) ----
    SetIndexBuffer(0, BullOpen);
    SetIndexBuffer(1, BullHigh);
    SetIndexBuffer(2, BullLow);
    SetIndexBuffer(3, BullClose);
-   SetIndexStyle(0, DRAW_CANDLES, STYLE_SOLID, 1, Candle_Bull_Color);
+   SetIndexStyle(0, DRAW_NONE);
+   SetIndexStyle(1, DRAW_NONE);
+   SetIndexStyle(2, DRAW_NONE);
+   SetIndexStyle(3, DRAW_NONE);
    SetIndexLabel(0, "Candle Alta");
    SetIndexEmptyValue(0, EMPTY_VALUE);
    SetIndexEmptyValue(1, EMPTY_VALUE);
    SetIndexEmptyValue(2, EMPTY_VALUE);
    SetIndexEmptyValue(3, EMPTY_VALUE);
 
-   // -- Velas de baixa (DRAW_CANDLES, vermelho IQ) ---------------------
+   // -- Velas de baixa (DRAW_NONE: buffers auxiliares, sem desenho proprio) ---
    SetIndexBuffer(4, BearOpen);
    SetIndexBuffer(5, BearHigh);
    SetIndexBuffer(6, BearLow);
    SetIndexBuffer(7, BearClose);
-   SetIndexStyle(4, DRAW_CANDLES, STYLE_SOLID, 1, Candle_Bear_Color);
+   SetIndexStyle(4, DRAW_NONE);
+   SetIndexStyle(5, DRAW_NONE);
+   SetIndexStyle(6, DRAW_NONE);
+   SetIndexStyle(7, DRAW_NONE);
    SetIndexLabel(4, "Candle Baixa");
    SetIndexEmptyValue(4, EMPTY_VALUE);
    SetIndexEmptyValue(5, EMPTY_VALUE);
@@ -298,12 +340,17 @@ int OnInit()
    g_lastConfirmBars      = -9999;
    g_lastSigTime          = 0;
    g_lastSigDir           = "";
+   g_lastSigScore         = 0;
    g_lastSigStatus        = "";
+   g_armedVolOk           = true;
+   g_armedSessionPrime    = true;
+   g_armedMtfOk           = true;
+   g_armedDivBonus        = 0;
 
    // Cria painel informativo
    if(Dashboard_Enable) CreatePanel();
 
-   IndicatorShortName("BOTDINVELAS V15 [" + IntegerToString(g_tf) + "m]");
+   IndicatorShortName("BOTDINVELAS V15.3 [" + IntegerToString(g_tf) + "m]");
    return(INIT_SUCCEEDED);
   }
 
@@ -340,6 +387,7 @@ int OnCalculate(const int rates_total,
       startBar = rates_total - prev_calculated;
    if(startBar < 2) startBar = 2;
 
+   int lastHistSignalBar = 99999; // controle de cooldown no historico
    for(int bar = startBar; bar >= 2; bar--)
      {
       // Preenche buffers de vela colorida (IQ Option style)
@@ -364,20 +412,38 @@ int OnCalculate(const int rates_total,
       int regFails = CalcRegimeFails(bar, atrOk, adxOk, bbwOk, slopeOk);
       bool regimeOk = !Enable_Regime_Filter || (regFails <= Max_Regime_Failures);
 
+      // Cooldown historico: pula plotagem se muito proximo do ultimo sinal confirmado
+      int cooldownBarsH = (g_tf == 5) ? Cooldown_Bars_M5 : Cooldown_Bars_M15;
+      if((lastHistSignalBar - bar) < cooldownBarsH) continue;
+
+      // Filtro de volume: rejeita velas com volume abaixo da media
+      if(!CheckVolumeFilter(bar)) continue;
+
+      // Score minimo ajustado pela sessao de mercado
       int scoreMin = (g_tf == 5) ? V15_Score_Min_M5 : V15_Score_Min_M15;
+      if(!IsInPrimeSession(bar)) scoreMin += Session_Score_Penalty;
+
+      // Bonus de divergencia RSI
+      int divBonusCallH = CalcDivergenceBonus(bar, 1);
+      int divBonusPutH  = CalcDivergenceBonus(bar, -1);
+      int adjCallScoreH = callScore + divBonusCallH;
+      int adjPutScoreH  = putScore  + divBonusPutH;
+
       double atrVal = iATR(NULL, 0, ATR_Period, bar-1);
 
       // Determina direcao do sinal historico (se houver)
       int dir = 0;
-      if(callScore >= scoreMin &&
-         (callScore - putScore) >= V15_Gap_Min &&
+      if(adjCallScoreH >= scoreMin &&
+         (adjCallScoreH - adjPutScoreH) >= V15_Gap_Min &&
          callComp >= Min_Components && regimeOk &&
-         CheckStructuralFilter(bar, 1))
+         CheckStructuralFilter(bar, 1) &&
+         CheckMTFFilter(bar, 1))
            dir = 1;
-      else if(putScore >= scoreMin &&
-              (putScore - callScore) >= V15_Gap_Min &&
+      else if(adjPutScoreH >= scoreMin &&
+              (adjPutScoreH - adjCallScoreH) >= V15_Gap_Min &&
               putComp >= Min_Components && regimeOk &&
-              CheckStructuralFilter(bar, -1))
+              CheckStructuralFilter(bar, -1) &&
+              CheckMTFFilter(bar, -1))
            dir = -1;
       // Fallback padroes classicos (score V15 nao atingiu o minimo)
       else if(Fallback_Enable && regimeOk)
@@ -388,7 +454,9 @@ int OnCalculate(const int rates_total,
            {
             string patName = "";
             dir = CheckFallbackPatterns(bar, patName);
-            if(dir != 0 && !CheckStructuralFilter(bar, dir)) dir = 0;
+            if(dir != 0 &&
+               (!CheckStructuralFilter(bar, dir) || !CheckMTFFilter(bar, dir)))
+               dir = 0;
            }
         }
 
@@ -402,6 +470,7 @@ int OnCalculate(const int rates_total,
            {
             if(dir == 1) BuyArrow[bar-1]  = Low[bar-1]  - atrVal * 0.5;
             else         SellArrow[bar-1] = High[bar-1] + atrVal * 0.5;
+            lastHistSignalBar = bar; // atualiza cooldown apos sinal confirmado
            }
          else
            {
@@ -472,6 +541,9 @@ void ProcessBar1()
    // Limpa estado de armamento anterior se houver (situacao excepcional)
    if(g_armedDir != 0) g_armedDir = 0;
 
+   // Filtro de volume: rejeita se vela candidata tem volume abaixo da media
+   if(!CheckVolumeFilter(1)) return;
+
    // Calcula todos os componentes do score V15 para bar=1
    int rsiPts=0,rsiDir=0, bbPts=0,bbDir=0, wickPts=0,wickDir=0;
    int impPts=0,impDir=0, kelPts=0,kelDir=0, engPts=0,engDir=0;
@@ -507,27 +579,46 @@ void ProcessBar1()
    int regFails = CalcRegimeFails(1, atrOk, adxOk, bbwOk, slopeOk);
    if(Enable_Regime_Filter && regFails > Max_Regime_Failures) return;
 
+   // Score minimo ajustado pela sessao de mercado
+   bool sessionPrime = IsInPrimeSession(1);
    int scoreMin = (g_tf == 5) ? V15_Score_Min_M5 : V15_Score_Min_M15;
+   if(!sessionPrime) scoreMin += Session_Score_Penalty;
+
+   // Bonus de divergencia RSI (somar ao score relevante)
+   int divBonusCall = CalcDivergenceBonus(1, 1);
+   int divBonusPut  = CalcDivergenceBonus(1, -1);
+   int adjCallScore = callScore + divBonusCall;
+   int adjPutScore  = putScore  + divBonusPut;
 
    // -- Tenta armar CALL -----------------------------------------------
-   if(callScore >= scoreMin &&
-      (callScore - putScore) >= V15_Gap_Min &&
+   if(adjCallScore >= scoreMin &&
+      (adjCallScore - adjPutScore) >= V15_Gap_Min &&
       callComp >= Min_Components &&
-      CheckStructuralFilter(1, 1))
+      CheckStructuralFilter(1, 1) &&
+      CheckMTFFilter(1, 1))
      {
-      ArmSignal(1, 1, callScore, putScore,
+      g_armedVolOk        = true;
+      g_armedSessionPrime = sessionPrime;
+      g_armedMtfOk        = true;
+      g_armedDivBonus     = divBonusCall;
+      ArmSignal(1, 1, adjCallScore, adjPutScore,
                 rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
                 callComp, regFails, "ReversalV15_CALL");
       return;
      }
 
    // -- Tenta armar PUT ------------------------------------------------
-   if(putScore >= scoreMin &&
-      (putScore - callScore) >= V15_Gap_Min &&
+   if(adjPutScore >= scoreMin &&
+      (adjPutScore - adjCallScore) >= V15_Gap_Min &&
       putComp >= Min_Components &&
-      CheckStructuralFilter(1, -1))
+      CheckStructuralFilter(1, -1) &&
+      CheckMTFFilter(1, -1))
      {
-      ArmSignal(1, -1, callScore, putScore,
+      g_armedVolOk        = true;
+      g_armedSessionPrime = sessionPrime;
+      g_armedMtfOk        = true;
+      g_armedDivBonus     = divBonusPut;
+      ArmSignal(1, -1, adjCallScore, adjPutScore,
                 rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
                 putComp, regFails, "ReversalV15_PUT");
       return;
@@ -542,10 +633,16 @@ void ProcessBar1()
         {
          string fbPat = "";
          int fbDir = CheckFallbackPatterns(1, fbPat);
-         if(fbDir != 0 && CheckStructuralFilter(1, fbDir))
+         if(fbDir != 0 && CheckStructuralFilter(1, fbDir) && CheckMTFFilter(1, fbDir))
+           {
+            g_armedVolOk        = true;
+            g_armedSessionPrime = sessionPrime;
+            g_armedMtfOk        = true;
+            g_armedDivBonus     = 0;
             ArmSignal(1, fbDir, callScore, putScore,
                       rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
                       (fbDir==1) ? callComp : putComp, regFails, fbPat);
+           }
         }
      }
   }
@@ -1102,6 +1199,139 @@ int CheckFallbackPatterns(int bar, string &patName)
   }
 
 // =======================================================================
+// FILTROS DE QUALIDADE — Volume, Sessao, MTF, Divergencia RSI
+// =======================================================================
+
+// Filtro de Volume Tick: rejeita sinais em velas com volume abaixo da media
+// Reversao sem volume = fakeout provavel
+bool CheckVolumeFilter(int bar)
+  {
+   if(!Enable_Volume_Filter) return(true);
+   int total = iBars(NULL, 0);
+   if(bar + Volume_Lookback >= total) return(true);
+
+   long currentVol = iVolume(NULL, 0, bar);
+   if(currentVol <= 0) return(false);
+
+   double sumVol = 0.0;
+   for(int k = bar + 1; k <= bar + Volume_Lookback && k < total; k++)
+      sumVol += (double)iVolume(NULL, 0, k);
+   double avgVol = sumVol / Volume_Lookback;
+   if(avgVol <= 0) return(true);
+
+   return((double)currentVol >= avgVol * Volume_Min_Ratio);
+  }
+
+// Retorna a razao volume_atual / volume_medio para a barra indicada (para o painel)
+double GetVolumeRatio(int bar)
+  {
+   int total = iBars(NULL, 0);
+   if(bar + Volume_Lookback >= total) return(1.0);
+   long currentVol = iVolume(NULL, 0, bar);
+   if(currentVol <= 0) return(0.0);
+   double sumVol = 0.0;
+   for(int k = bar + 1; k <= bar + Volume_Lookback && k < total; k++)
+      sumVol += (double)iVolume(NULL, 0, k);
+   double avgVol = sumVol / Volume_Lookback;
+   if(avgVol <= 0) return(1.0);
+   return((double)currentVol / avgVol);
+  }
+
+// Filtro de Sessao: verifica se estamos em horario prime de mercado (UTC)
+// Fora do horario prime, o score minimo eh elevado por Session_Score_Penalty
+bool IsInPrimeSession(int bar)
+  {
+   if(!Enable_Session_Filter) return(true);
+
+   int hour = TimeHour(Time[bar]);
+
+   // Overlap Londres + NY = sessao PREMIUM (13-16 UTC)
+   if(hour >= 13 && hour < 16) return(true);
+
+   // Sessao Londres (08-12 UTC)
+   if(hour >= Session_London_Start && hour < Session_London_End) return(true);
+
+   // Sessao NY (13-17 UTC)
+   if(hour >= Session_NY_Start && hour < Session_NY_End) return(true);
+
+   // Sessao Asia (00-03 UTC) — qualidade media, aceita sem penalidade
+   if(hour >= Session_Asia_Start && hour < Session_Asia_End) return(true);
+
+   return(false); // fora de sessao: aplica penalidade de score
+  }
+
+// Filtro Multi-Timeframe: verifica se o M15 nao contradiz a direcao do sinal M5
+// Aplica apenas quando g_tf == 5; sempre retorna true para M15
+bool CheckMTFFilter(int bar, int dir)
+  {
+   if(!Enable_MTF_Filter) return(true);
+   if(g_tf != 5)          return(true); // so aplica no M5
+
+   // Encontra a barra M15 correspondente ao time da barra M5
+   int m15bar = (bar == 0) ? 0 : iBarShift(NULL, PERIOD_M15, Time[bar], false);
+   if(m15bar < 0) m15bar = 0;
+
+   // RSI do M15: bloqueia CALL se sobrecomprado, PUT se sobrevendido
+   double rsiM15 = iRSI(NULL, PERIOD_M15, RSI_Period, PRICE_CLOSE, m15bar);
+   if(dir ==  1 && rsiM15 > MTF_RSI_Block_High) return(false);
+   if(dir == -1 && rsiM15 < MTF_RSI_Block_Low)  return(false);
+
+   // Tendencia da EMA21 no M15: bloqueia contra-tendencia forte
+   double emaM15_now  = iMA(NULL, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, m15bar);
+   double emaM15_prev = iMA(NULL, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, m15bar + 3);
+   if(emaM15_now > 0 && emaM15_prev > 0)
+     {
+      double slopeM15 = (emaM15_now - emaM15_prev) / emaM15_now;
+      double slopeM15 = (emaM15_now - emaM15_prev) / emaM15_now;
+      if(dir ==  1 && slopeM15 < -MTF_Slope_Threshold) return(false); // M15 caindo forte, CALL perigoso
+      if(dir == -1 && slopeM15 >  MTF_Slope_Threshold) return(false); // M15 subindo forte, PUT perigoso
+     }
+
+   return(true);
+  }
+
+// Bonus de Divergencia RSI: detecta divergencia entre preco e RSI
+// Divergencia bullish: preco fez novo fundo, RSI fez fundo mais alto -> bônus CALL
+// Divergencia bearish: preco fez novo topo, RSI fez topo mais baixo -> bonus PUT
+int CalcDivergenceBonus(int bar, int dir)
+  {
+   if(!Enable_RSI_Divergence) return(0);
+   int total = iBars(NULL, 0);
+   if(bar + Divergence_Lookback >= total) return(0);
+
+   double rsiNow   = iRSI(NULL, 0, RSI_Period, PRICE_CLOSE, bar);
+   double priceNow = Close[bar];
+
+   for(int k = bar + 3; k <= bar + Divergence_Lookback && k < total; k++)
+     {
+      double rsiPast   = iRSI(NULL, 0, RSI_Period, PRICE_CLOSE, k);
+      double pricePast = Close[k];
+
+      // Divergencia Bullish (CALL): preco fez novo fundo, RSI fez fundo mais alto
+      if(dir == 1)
+        {
+         if(priceNow < pricePast && rsiNow > rsiPast)
+           {
+            if(rsiNow < Divergence_Bull_MaxRSI && rsiPast < Divergence_Bull_PastRSI) // ambos em zona de sobrevenda
+               return(Divergence_Bonus);
+           }
+        }
+
+      // Divergencia Bearish (PUT): preco fez novo topo, RSI fez topo mais baixo
+      if(dir == -1)
+        {
+         if(priceNow > pricePast && rsiNow < rsiPast)
+           {
+            if(rsiNow > Divergence_Bear_MinRSI && rsiPast > Divergence_Bear_PastRSI) // ambos em zona de sobrecompra
+               return(Divergence_Bonus);
+           }
+        }
+     }
+
+   return(0);
+  }
+
+// =======================================================================
 // DASHBOARD - Painel informativo no canto superior direito
 // =======================================================================
 #define PANEL_BG_NAME PANEL_PREFIX+"BG"
@@ -1190,7 +1420,7 @@ void UpdatePanel()
 
    int r = 0;
    // L0: Titulo com timeframe e simbolo
-   SetLine(r++, "BOTDINVELAS V15 | "+IntegerToString(g_tf)+"m | "+Symbol(), clrDodgerBlue);
+   SetLine(r++, "BOTDINVELAS V15.3 | "+IntegerToString(g_tf)+"m | "+Symbol(), clrDodgerBlue);
    // L1: Scores dos componentes RSI / BB / Wick
    SetLine(r++, StringFormat("RSI:%2d | BB:%2d | Wick:%2d", rP, bP, wP));
    // L2: Scores dos componentes Impulso / Keltner / Engolfo
@@ -1230,13 +1460,43 @@ void UpdatePanel()
    SetLine(r++, StringFormat("MaxFails:%d | Regime:%s",
       Max_Regime_Failures, Enable_Regime_Filter?"ON":"OFF"), clrDimGray);
 
+   // -- Novos filtros de qualidade V15.3 ---------------------------------
+   // L12: Volume Tick Filter
+   bool volOk      = CheckVolumeFilter(1);
+   double volRatio = GetVolumeRatio(1);
+   bool sessOk     = IsInPrimeSession(1);
+   int  sessAdj    = sessOk ? 0 : Session_Score_Penalty;
+   SetLine(r++, StringFormat("Volume: %s (%.0f%%) | Sessao: %s",
+      volOk ? "OK" : "--",
+      volRatio * 100.0,
+      sessOk ? "PRIME" : StringFormat("OFF(+%dpts)", Session_Score_Penalty)),
+      (!volOk || !sessOk) ? clrOrangeRed : clrLime);
+   // L13: MTF M15 Filter
+   int  cDirD    = (cs >= ps) ? 1 : -1;
+   bool mtfOkD   = CheckMTFFilter(1, cDirD);
+   int  m15barD  = iBarShift(NULL, PERIOD_M15, Time[1], false);
+   if(m15barD < 0) m15barD = 0;
+   int  rsiM15D  = (int)iRSI(NULL, PERIOD_M15, RSI_Period, PRICE_CLOSE, m15barD);
+   SetLine(r++, StringFormat("MTF M15: %s | RSI M15: %d",
+      mtfOkD ? "OK" : "--", rsiM15D),
+      mtfOkD ? clrLime : clrOrangeRed);
+   // L14: Divergencia RSI
+   int divBonusD = CalcDivergenceBonus(1, cDirD);
+   SetLine(r++, StringFormat("Divergencia RSI: %s",
+      divBonusD > 0 ? StringFormat("+%dpts (bonus ativo)", divBonusD) : "---"),
+      divBonusD > 0 ? clrGold : clrSilver);
+   // L15: Score minimo efetivo (ajustado por sessao)
+   SetLine(r++, StringFormat("ScoreMin efet: %d | Adj sessao: %+d",
+      scoreMin + sessAdj, -sessAdj), clrDimGray);
+
    ChartRedraw(0);
   }
 
 // =======================================================================
 // EXPORTACAO CSV
 // Formato: timestamp,symbol,timeframe,status,direction,call_score,put_score,
-//          pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural
+//          pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural,
+//          volume_ok,session_prime,mtf_ok,divergence_bonus
 // O bot executor Python le este arquivo para decidir entradas
 // =======================================================================
 void ExportCSV(datetime sigTime, string status, string dir,
@@ -1262,17 +1522,22 @@ void ExportCSV(datetime sigTime, string status, string dir,
       // Escreve cabecalho na primeira vez
       FileWriteString(h,
          "timestamp,symbol,timeframe,status,direction,call_score,put_score,"
-         "pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural\n");
+         "pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural,"
+         "volume_ok,session_prime,mtf_ok,divergence_bonus\n");
      }
 
-   // Escreve linha com todos os dados do sinal
+   // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.3)
    string line = StringFormat(
-      "%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s\n",
+      "%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d\n",
       TimeToString(sigTime, TIME_DATE|TIME_SECONDS),
       Symbol(), g_tf, status, dir,
       callScore, putScore, pattern,
       rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-      regFails, structOk?"1":"0");
+      regFails, structOk?"1":"0",
+      g_armedVolOk?"1":"0",
+      g_armedSessionPrime?"1":"0",
+      g_armedMtfOk?"1":"0",
+      g_armedDivBonus);
 
    FileWriteString(h, line);
    FileClose(h);
@@ -1286,7 +1551,7 @@ void SendAlerts(string dir, int score)
    string sym   = Symbol();
    string tfStr = IntegerToString(g_tf)+"m";
    string msg   = StringFormat(
-      "BOTDINVELAS V15 | %s %s | %s | Score:%d | %s",
+      "BOTDINVELAS V15.3 | %s %s | %s | Score:%d | %s",
       sym, tfStr, dir, score,
       TimeToString(TimeCurrent(), TIME_SECONDS));
 
@@ -1296,5 +1561,6 @@ void SendAlerts(string dir, int score)
   }
 
 //+------------------------------------------------------------------+
-//| Fim do indicador BOTDINVELAS_V15.mq4 - Versao Definitiva         |
+//| Fim do indicador BOTDINVELAS_V15.mq4 - Versao 15.3              |
+//| V15.3: Volume Tick + Session + MTF M15 + Divergencia RSI        |
 //+------------------------------------------------------------------+
