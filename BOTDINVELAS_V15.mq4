@@ -487,12 +487,18 @@ int OnCalculate(const int rates_total,
             if(dir == 1) CrossBuf[bar-1]  = Low[bar-1]  - atrVal * 0.3;
             else         CrossBuf[bar-1]  = High[bar-1] + atrVal * 0.3;
            }
-         // Grava sinal historico no log TXT (apenas na primeira passagem completa)
+         // Grava sinal historico nos logs TXT e CSV (apenas na primeira passagem completa)
          if(prev_calculated <= 0)
+           {
+            ExportCSV(Time[bar], histStatus, (dir==1)?"CALL":"PUT",
+                      histCall, histPut, histPattern,
+                      rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
+                      regFails, true, true);
             ExportTXT(Time[bar], histStatus, (dir==1)?"CALL":"PUT",
                       histCall, histPut, histPattern,
                       rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-                      regFails, true);
+                      regFails, true, true);
+           }
         }
      }
 
@@ -694,12 +700,12 @@ void ArmSignal(int bar, int dir, int callScore, int putScore,
    ExportCSV(Time[bar], "ARMED", (dir==1) ? "CALL" : "PUT",
              callScore, putScore, pattern,
              rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-             regFails, true);
+             regFails, true, false);
    // Exporta TXT legivel com status ARMED
    ExportTXT(Time[bar], "ARMED", (dir==1) ? "CALL" : "PUT",
              callScore, putScore, pattern,
              rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-             regFails, true);
+             regFails, true, false);
   }
 
 // =======================================================================
@@ -734,12 +740,12 @@ void ProcessBar0()
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
       ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
 
       g_lastSigTime   = g_armedBarTime;
       g_lastSigDir    = (g_armedDir==1) ? "CALL" : "PUT";
@@ -781,12 +787,12 @@ void ProcessBar0()
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
       ExportTXT(g_armedBarTime, "CONFIRMED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
 
       SendAlerts((g_armedDir==1)?"CALL":"PUT",
                  (g_armedDir==1)?g_armedCallScore:g_armedPutScore);
@@ -814,12 +820,12 @@ void ProcessBar0()
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
       ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
+                g_armedRegFails, g_armedStructOk, false);
 
       g_lastSigTime   = g_armedBarTime;
       g_lastSigDir    = (g_armedDir==1) ? "CALL" : "PUT";
@@ -1538,7 +1544,7 @@ void UpdatePanel()
 void ExportCSV(datetime sigTime, string status, string dir,
                int callScore, int putScore, string pattern,
                int rsiPts, int bbPts, int wickPts, int impPts, int kelPts, int engPts,
-               int regFails, bool structOk)
+               int regFails, bool structOk, bool isHistoric)
   {
    if(!Enable_CSV) return;
 
@@ -1557,14 +1563,30 @@ void ExportCSV(datetime sigTime, string status, string dir,
       if(h == INVALID_HANDLE) { Print("V15 CSV: erro ao criar arquivo."); return; }
       // Escreve cabecalho na primeira vez
       FileWriteString(h,
-         "timestamp,symbol,timeframe,status,direction,call_score,put_score,"
+         "local_time,timestamp,symbol,timeframe,status,direction,call_score,put_score,"
          "pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural,"
          "volume_ok,session_prime,mtf_ok,divergence_bonus\n");
      }
 
+   // Calcula horario local do usuario
+   string tsLocal;
+   if(isHistoric)
+     {
+      // Para sinais historicos: aproxima horario local usando offset servidor->local
+      int serverOffset = (int)(TimeCurrent() - TimeLocal());
+      datetime localTime = sigTime - serverOffset;
+      tsLocal = TimeToString(localTime, TIME_DATE|TIME_SECONDS);
+     }
+   else
+     {
+      // Sinal em tempo real: usa TimeLocal() direto
+      tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
+     }
+
    // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.4)
    string line = StringFormat(
-      "%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d\n",
+      "%s,%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d\n",
+      tsLocal,
       TimeToString(sigTime, TIME_DATE|TIME_SECONDS),
       Symbol(), g_tf, status, dir,
       callScore, putScore, pattern,
@@ -1587,7 +1609,7 @@ void ExportCSV(datetime sigTime, string status, string dir,
 void ExportTXT(datetime sigTime, string status, string direction,
                int callScore, int putScore, string pattern,
                int rsiPts, int bbPts, int wickPts, int impPts, int kelPts, int engPts,
-               int regFails, bool structOk)
+               int regFails, bool structOk, bool isHistoric)
   {
    if(!Enable_TXT_Log) return;
 
@@ -1611,8 +1633,23 @@ void ExportTXT(datetime sigTime, string status, string direction,
       FileWriteString(handle, "============================================================\r\n\r\n");
      }
 
-   // Formata timestamp: YYYY-MM-DD HH:MM:SS
-   string ts = TimeToString(sigTime, TIME_DATE|TIME_SECONDS);
+   // Calcula horario local do usuario
+   string tsLocal;
+   if(isHistoric)
+     {
+      // Para sinais historicos: aproxima horario local usando offset servidor->local
+      int serverOffset = (int)(TimeCurrent() - TimeLocal());
+      datetime localTime = sigTime - serverOffset;
+      tsLocal = TimeToString(localTime, TIME_DATE|TIME_SECONDS);
+     }
+   else
+     {
+      // Sinal em tempo real: usa TimeLocal() direto
+      tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
+     }
+
+   // Horario do servidor para bater com o grafico
+   string tsServer = TimeToString(sigTime, TIME_SECONDS);
 
    // Timeframe como texto
    string tf = IntegerToString(Period()) + "m";
@@ -1623,8 +1660,10 @@ void ExportTXT(datetime sigTime, string status, string direction,
    // Score principal (da direcao do sinal)
    int mainScore = (direction == "CALL") ? callScore : putScore;
 
-   // Linha principal: [timestamp] SIMBOLO | TF | DIRECAO | Score: N | STATUS
-   string line = "[" + ts + "] " + Symbol() + " | " + tf + " | " + arrow
+   // Linha principal: [LOCAL: YYYY-MM-DD HH:MM:SS | SRV: HH:MM:SS] SIMBOLO | TF | DIRECAO | Score: N | STATUS
+   string sym  = Symbol();
+   string line = "[LOCAL: " + tsLocal + " | SRV: " + tsServer + "] "
+               + sym + " | " + tf + " | " + arrow
                + " | Score: " + IntegerToString(mainScore) + " | " + status;
    FileWriteString(handle, line + "\r\n");
 
