@@ -10,9 +10,9 @@
 //+------------------------------------------------------------------+
 #property copyright   "BOTDINVELAS"
 #property link        "https://github.com/edsmendanha/BOTDINVELASM1M5"
-#property version     "15.3"
+#property version     "15.4"
 #property strict
-#property description "Motor V15.3 Qualidade Maxima | Volume+Sessao+MTF+Divergencia | Dois estagios"
+#property description "Motor V15.4 Qualidade Maxima | Volume+Sessao+MTF+Divergencia+Log TXT | Dois estagios"
 
 #property indicator_chart_window
 #property indicator_buffers 14
@@ -169,6 +169,11 @@ input int    Dashboard_FontSize = 9;    // Tamanho da fonte do painel
 //--- CSV
 input bool   Enable_CSV         = true;                      // Exportar sinais para CSV
 input string CSV_Filename       = "signals_botdinvelas.csv"; // Nome do arquivo
+
+//--- Log TXT organizado
+input bool   Enable_TXT_Log    = true;                         // Habilitar log TXT organizado
+input string TXT_Log_Filename  = "BOTDINVELAS_sinais.txt";     // Nome do arquivo TXT
+input bool   TXT_Log_Breakdown = true;                         // Incluir breakdown dos componentes
 
 //--- Alertas (apenas em CONFIRMADO)
 input bool   Alert_Popup       = true;        // Popup ao confirmar sinal
@@ -350,7 +355,7 @@ int OnInit()
    // Cria painel informativo
    if(Dashboard_Enable) CreatePanel();
 
-   IndicatorShortName("BOTDINVELAS V15.3 [" + IntegerToString(g_tf) + "m]");
+   IndicatorShortName("BOTDINVELAS V15.4 [" + IntegerToString(g_tf) + "m]");
    return(INIT_SUCCEEDED);
   }
 
@@ -433,18 +438,19 @@ int OnCalculate(const int rates_total,
 
       // Determina direcao do sinal historico (se houver)
       int dir = 0;
+      string histPattern = "";
       if(adjCallScoreH >= scoreMin &&
          (adjCallScoreH - adjPutScoreH) >= V15_Gap_Min &&
          callComp >= Min_Components && regimeOk &&
          CheckStructuralFilter(bar, 1) &&
          CheckMTFFilter(bar, 1))
-           dir = 1;
+        { dir = 1; histPattern = "ReversalV15_CALL"; }
       else if(adjPutScoreH >= scoreMin &&
               (adjPutScoreH - adjCallScoreH) >= V15_Gap_Min &&
               putComp >= Min_Components && regimeOk &&
               CheckStructuralFilter(bar, -1) &&
               CheckMTFFilter(bar, -1))
-           dir = -1;
+        { dir = -1; histPattern = "ReversalV15_PUT"; }
       // Fallback padroes classicos (score V15 nao atingiu o minimo)
       else if(Fallback_Enable && regimeOk)
         {
@@ -457,6 +463,7 @@ int OnCalculate(const int rates_total,
             if(dir != 0 &&
                (!CheckStructuralFilter(bar, dir) || !CheckMTFFilter(bar, dir)))
                dir = 0;
+            if(dir != 0) histPattern = patName;
            }
         }
 
@@ -466,6 +473,9 @@ int OnCalculate(const int rates_total,
         {
          bool histConfirmed = (dir == 1) ? (Open[bar-1] > Close[bar])
                                          : (Open[bar-1] < Close[bar]);
+         string histStatus = histConfirmed ? "CONFIRMED" : "REJECTED";
+         int    histCall   = (dir == 1) ? adjCallScoreH : callScore;
+         int    histPut    = (dir == -1) ? adjPutScoreH  : putScore;
          if(histConfirmed)
            {
             if(dir == 1) BuyArrow[bar-1]  = Low[bar-1]  - atrVal * 0.5;
@@ -477,6 +487,12 @@ int OnCalculate(const int rates_total,
             if(dir == 1) CrossBuf[bar-1]  = Low[bar-1]  - atrVal * 0.3;
             else         CrossBuf[bar-1]  = High[bar-1] + atrVal * 0.3;
            }
+         // Grava sinal historico no log TXT (apenas na primeira passagem completa)
+         if(prev_calculated <= 0)
+            ExportTXT(Time[bar], histStatus, (dir==1)?"CALL":"PUT",
+                      histCall, histPut, histPattern,
+                      rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
+                      regFails, true);
         }
      }
 
@@ -679,6 +695,11 @@ void ArmSignal(int bar, int dir, int callScore, int putScore,
              callScore, putScore, pattern,
              rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
              regFails, true);
+   // Exporta TXT legivel com status ARMED
+   ExportTXT(Time[bar], "ARMED", (dir==1) ? "CALL" : "PUT",
+             callScore, putScore, pattern,
+             rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
+             regFails, true);
   }
 
 // =======================================================================
@@ -710,6 +731,11 @@ void ProcessBar0()
          CrossBuf[confIdx] = High[confIdx] + atrConf * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
+      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -756,6 +782,11 @@ void ProcessBar0()
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
                 g_armedRegFails, g_armedStructOk);
+      ExportTXT(g_armedBarTime, "CONFIRMED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
 
       SendAlerts((g_armedDir==1)?"CALL":"PUT",
                  (g_armedDir==1)?g_armedCallScore:g_armedPutScore);
@@ -780,6 +811,11 @@ void ProcessBar0()
          CrossBuf[0] = High[0] + atrNow * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
+      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -1420,7 +1456,7 @@ void UpdatePanel()
 
    int r = 0;
    // L0: Titulo com timeframe e simbolo
-   SetLine(r++, "BOTDINVELAS V15.3 | "+IntegerToString(g_tf)+"m | "+Symbol(), clrDodgerBlue);
+   SetLine(r++, "BOTDINVELAS V15.4 | "+IntegerToString(g_tf)+"m | "+Symbol(), clrDodgerBlue);
    // L1: Scores dos componentes RSI / BB / Wick
    SetLine(r++, StringFormat("RSI:%2d | BB:%2d | Wick:%2d", rP, bP, wP));
    // L2: Scores dos componentes Impulso / Keltner / Engolfo
@@ -1460,7 +1496,7 @@ void UpdatePanel()
    SetLine(r++, StringFormat("MaxFails:%d | Regime:%s",
       Max_Regime_Failures, Enable_Regime_Filter?"ON":"OFF"), clrDimGray);
 
-   // -- Novos filtros de qualidade V15.3 ---------------------------------
+   // -- Novos filtros de qualidade V15.4 ---------------------------------
    // L12: Volume Tick Filter
    bool volOk      = CheckVolumeFilter(1);
    double volRatio = GetVolumeRatio(1);
@@ -1526,7 +1562,7 @@ void ExportCSV(datetime sigTime, string status, string dir,
          "volume_ok,session_prime,mtf_ok,divergence_bonus\n");
      }
 
-   // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.3)
+   // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.4)
    string line = StringFormat(
       "%s,%s,%dm,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,%s,%d\n",
       TimeToString(sigTime, TIME_DATE|TIME_SECONDS),
@@ -1544,6 +1580,79 @@ void ExportCSV(datetime sigTime, string status, string dir,
   }
 
 // =======================================================================
+// EXPORTACAO TXT ORGANIZADO — Log legivel multi-ativo
+// Todos os graficos com o indicador escrevem no mesmo arquivo (FILE_COMMON)
+// Caminho: AppData\Roaming\MetaQuotes\Terminal\Common\Files\<TXT_Log_Filename>
+// =======================================================================
+void ExportTXT(datetime sigTime, string status, string direction,
+               int callScore, int putScore, string pattern,
+               int rsiPts, int bbPts, int wickPts, int impPts, int kelPts, int engPts,
+               int regFails, bool structOk)
+  {
+   if(!Enable_TXT_Log) return;
+
+   // Abre o arquivo em modo append usando FILE_COMMON (compartilhado entre graficos)
+   int handle = FileOpen(TXT_Log_Filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+     {
+      Print("V15 TXT: erro ao abrir arquivo de log.");
+      return;
+     }
+
+   // Posiciona no final do arquivo para append
+   FileSeek(handle, 0, SEEK_END);
+
+   // Escreve cabecalho apenas quando o arquivo estiver vazio
+   if(FileTell(handle) == 0)
+     {
+      FileWriteString(handle, "============================================================\r\n");
+      FileWriteString(handle, "  BOTDINVELAS V15.4 \x2014 Log de Sinais\r\n");
+      FileWriteString(handle, "  Gerado automaticamente pelo indicador MT4\r\n");
+      FileWriteString(handle, "============================================================\r\n\r\n");
+     }
+
+   // Formata timestamp: YYYY-MM-DD HH:MM:SS
+   string ts = TimeToString(sigTime, TIME_DATE|TIME_SECONDS);
+
+   // Timeframe como texto
+   string tf = IntegerToString(Period()) + "m";
+
+   // Seta visual de direcao
+   string arrow = (direction == "CALL") ? "CALL \x2191" : "PUT  \x2193";
+
+   // Score principal (da direcao do sinal)
+   int mainScore = (direction == "CALL") ? callScore : putScore;
+
+   // Linha principal: [timestamp] SIMBOLO | TF | DIRECAO | Score: N | STATUS
+   string line = "[" + ts + "] " + Symbol() + " | " + tf + " | " + arrow
+               + " | Score: " + IntegerToString(mainScore) + " | " + status;
+   FileWriteString(handle, line + "\r\n");
+
+   // Breakdown detalhado dos componentes (opcional, apenas em ARMED e CONFIRMED)
+   if(TXT_Log_Breakdown && (status == "CONFIRMED" || status == "ARMED"))
+     {
+      string detail = "             RSI:" + IntegerToString(rsiPts)
+                    + " | BB:"   + IntegerToString(bbPts)
+                    + " | Wick:" + IntegerToString(wickPts)
+                    + " | Imp:"  + IntegerToString(impPts)
+                    + " | KC:"   + IntegerToString(kelPts)
+                    + " | Eng:"  + IntegerToString(engPts)
+                    + " | CALL:" + IntegerToString(callScore)
+                    + " vs PUT:" + IntegerToString(putScore)
+                    + " | Regime:" + IntegerToString(4 - regFails) + "/4"
+                    + " | Struct:" + (structOk ? "OK" : "FAIL")
+                    + " | Pattern:" + pattern;
+      FileWriteString(handle, detail + "\r\n");
+     }
+
+   // Linha separadora apos sinal confirmado ou rejeitado
+   if(status == "CONFIRMED" || status == "REJECTED")
+      FileWriteString(handle, "------------------------------------------------------------\r\n");
+
+   FileClose(handle);
+  }
+
+// =======================================================================
 // ALERTAS - Disparados APENAS em sinal CONFIRMADO (nunca em ARMADO/REJEITADO)
 // =======================================================================
 void SendAlerts(string dir, int score)
@@ -1551,7 +1660,7 @@ void SendAlerts(string dir, int score)
    string sym   = Symbol();
    string tfStr = IntegerToString(g_tf)+"m";
    string msg   = StringFormat(
-      "BOTDINVELAS V15.3 | %s %s | %s | Score:%d | %s",
+      "BOTDINVELAS V15.4 | %s %s | %s | Score:%d | %s",
       sym, tfStr, dir, score,
       TimeToString(TimeCurrent(), TIME_SECONDS));
 
@@ -1561,6 +1670,7 @@ void SendAlerts(string dir, int score)
   }
 
 //+------------------------------------------------------------------+
-//| Fim do indicador BOTDINVELAS_V15.mq4 - Versao 15.3              |
-//| V15.3: Volume Tick + Session + MTF M15 + Divergencia RSI        |
+//| Fim do indicador BOTDINVELAS_V15.mq4 - Versao 15.4              |
+//| V15.4: Volume Tick + Session + MTF M15 + Divergencia RSI        |
+//|        + Log TXT organizado multi-ativo (FILE_COMMON)           |
 //+------------------------------------------------------------------+
