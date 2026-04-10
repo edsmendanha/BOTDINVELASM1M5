@@ -10,9 +10,9 @@
 //+------------------------------------------------------------------+
 #property copyright   "BOTDINVELAS"
 #property link        "https://github.com/edsmendanha/BOTDINVELASM1M5"
-#property version     "15.2"
+#property version     "15.5"
 #property strict
-#property description "Motor V15 Definitivo - Qualidade Maxima | Dois estagios: bolinha->seta/cruz"
+#property description "Motor V15.5 Qualidade Maxima | Log TXT CONFIRMED c/ horario local | Dois estagios"
 
 #property indicator_chart_window
 #property indicator_buffers 14
@@ -140,6 +140,11 @@ input int    Dashboard_FontSize = 9;    // Tamanho da fonte do painel
 input bool   Enable_CSV         = true;                      // Exportar sinais para CSV
 input string CSV_Filename       = "signals_botdinvelas.csv"; // Nome do arquivo
 
+//--- Log TXT organizado (apenas sinais CONFIRMADOS)
+input bool   Enable_TXT_Log    = true;                         // Habilitar log TXT organizado
+input string TXT_Log_Filename  = "BOTDINVELAS_sinais.txt";     // Nome do arquivo TXT
+input bool   TXT_Log_Breakdown = true;                         // Incluir breakdown dos componentes
+
 //--- Alertas (apenas em CONFIRMADO)
 input bool   Alert_Popup       = true;        // Popup ao confirmar sinal
 input bool   Alert_Sound       = true;        // Som ao confirmar sinal
@@ -150,13 +155,13 @@ input bool   Alert_Push        = false;       // Push notification
 // BUFFERS DE INDICADOR (14 no total)
 // =======================================================================
 
-// Velas de alta (grupo DRAW_CANDLES, verde IQ)
+// Velas de alta (buffers auxiliares DRAW_NONE, coloracao via PaintCandle)
 double BullOpen[];   // buffer 0
 double BullHigh[];   // buffer 1
 double BullLow[];    // buffer 2
 double BullClose[];  // buffer 3
 
-// Velas de baixa (grupo DRAW_CANDLES, vermelho IQ)
+// Velas de baixa (buffers auxiliares DRAW_NONE, coloracao via PaintCandle)
 double BearOpen[];   // buffer 4
 double BearHigh[];   // buffer 5
 double BearLow[];    // buffer 6
@@ -228,24 +233,30 @@ int OnInit()
       return(INIT_FAILED);
      }
 
-   // -- Velas de alta (DRAW_CANDLES, verde IQ) -------------------------
+   // -- Velas de alta (DRAW_NONE: buffers auxiliares, sem desenho proprio) ----
    SetIndexBuffer(0, BullOpen);
    SetIndexBuffer(1, BullHigh);
    SetIndexBuffer(2, BullLow);
    SetIndexBuffer(3, BullClose);
-   SetIndexStyle(0, DRAW_CANDLES, STYLE_SOLID, 1, Candle_Bull_Color);
+   SetIndexStyle(0, DRAW_NONE);
+   SetIndexStyle(1, DRAW_NONE);
+   SetIndexStyle(2, DRAW_NONE);
+   SetIndexStyle(3, DRAW_NONE);
    SetIndexLabel(0, "Candle Alta");
    SetIndexEmptyValue(0, EMPTY_VALUE);
    SetIndexEmptyValue(1, EMPTY_VALUE);
    SetIndexEmptyValue(2, EMPTY_VALUE);
    SetIndexEmptyValue(3, EMPTY_VALUE);
 
-   // -- Velas de baixa (DRAW_CANDLES, vermelho IQ) ---------------------
+   // -- Velas de baixa (DRAW_NONE: buffers auxiliares, sem desenho proprio) ---
    SetIndexBuffer(4, BearOpen);
    SetIndexBuffer(5, BearHigh);
    SetIndexBuffer(6, BearLow);
    SetIndexBuffer(7, BearClose);
-   SetIndexStyle(4, DRAW_CANDLES, STYLE_SOLID, 1, Candle_Bear_Color);
+   SetIndexStyle(4, DRAW_NONE);
+   SetIndexStyle(5, DRAW_NONE);
+   SetIndexStyle(6, DRAW_NONE);
+   SetIndexStyle(7, DRAW_NONE);
    SetIndexLabel(4, "Candle Baixa");
    SetIndexEmptyValue(4, EMPTY_VALUE);
    SetIndexEmptyValue(5, EMPTY_VALUE);
@@ -303,7 +314,7 @@ int OnInit()
    // Cria painel informativo
    if(Dashboard_Enable) CreatePanel();
 
-   IndicatorShortName("BOTDINVELAS V15 [" + IntegerToString(g_tf) + "m]");
+   IndicatorShortName("BOTDINVELAS V15.5 [" + IntegerToString(g_tf) + "m]");
    return(INIT_SUCCEEDED);
   }
 
@@ -408,6 +419,13 @@ int OnCalculate(const int rates_total,
             if(dir == 1) CrossBuf[bar-1]  = Low[bar-1]  - atrVal * 0.3;
             else         CrossBuf[bar-1]  = High[bar-1] + atrVal * 0.3;
            }
+
+          // Grava sinal historico no TXT (apenas na primeira passagem)
+          if(prev_calculated <= 0)
+             ExportTXT(Time[bar], histConfirmed?"CONFIRMED":"REJECTED", (dir==1)?"CALL":"PUT",
+                       callScore, putScore, (dir==1)?"ReversalV15_CALL":"ReversalV15_PUT",
+                       rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
+                       regFails, true);
         }
      }
 
@@ -582,6 +600,12 @@ void ArmSignal(int bar, int dir, int callScore, int putScore,
              callScore, putScore, pattern,
              rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
              regFails, true);
+
+   // Exporta TXT (internamente so grava se CONFIRMED)
+   ExportTXT(Time[bar], "ARMED", (dir==1) ? "CALL" : "PUT",
+             callScore, putScore, pattern,
+             rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
+             regFails, true);
   }
 
 // =======================================================================
@@ -613,6 +637,12 @@ void ProcessBar0()
          CrossBuf[confIdx] = High[confIdx] + atrConf * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
+
+      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -660,6 +690,12 @@ void ProcessBar0()
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
                 g_armedRegFails, g_armedStructOk);
 
+      ExportTXT(g_armedBarTime, "CONFIRMED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
+
       SendAlerts((g_armedDir==1)?"CALL":"PUT",
                  (g_armedDir==1)?g_armedCallScore:g_armedPutScore);
 
@@ -683,6 +719,12 @@ void ProcessBar0()
          CrossBuf[0] = High[0] + atrNow * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
+                g_armedCallScore, g_armedPutScore, g_armedPattern,
+                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
+                g_armedImpPts, g_armedKelPts, g_armedEngPts,
+                g_armedRegFails, g_armedStructOk);
+
+      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -1276,6 +1318,85 @@ void ExportCSV(datetime sigTime, string status, string dir,
 
    FileWriteString(h, line);
    FileClose(h);
+  }
+
+// =======================================================================
+// EXPORTACAO TXT ORGANIZADO
+// Grava apenas sinais CONFIRMADOS com horario local exato (com segundos)
+// Usa FILE_COMMON para que todos os graficos compartilhem o mesmo arquivo
+// Caminho: C:\Users\{user}\AppData\Roaming\MetaQuotes\Terminal\Common\Files\
+// =======================================================================
+void ExportTXT(datetime sigTime, string status, string direction,
+               int callScore, int putScore, string pattern,
+               int rsiPts, int bbPts, int wickPts, int impPts, int kelPts, int engPts,
+               int regFails, bool structOk)
+  {
+   if(!Enable_TXT_Log) return;
+
+   // Grava APENAS sinais confirmados no TXT
+   if(status != "CONFIRMED") return;
+
+   // Abrir arquivo em modo APPEND com FILE_COMMON (pasta compartilhada)
+   int handle = FileOpen(TXT_Log_Filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(handle == INVALID_HANDLE) return;
+
+   // Posicionar no final do arquivo (append)
+   FileSeek(handle, 0, SEEK_END);
+
+   // Se arquivo vazio, escrever header
+   if(FileTell(handle) == 0)
+     {
+      FileWriteString(handle, "============================================================\r\n");
+      FileWriteString(handle, "  BOTDINVELAS V15.5 - Log de Sinais CONFIRMADOS\r\n");
+      FileWriteString(handle, "  Gerado automaticamente pelo indicador MT4\r\n");
+      FileWriteString(handle, "  Horario: LOCAL (sua maquina)\r\n");
+      FileWriteString(handle, "============================================================\r\n\r\n");
+     }
+
+   // Horario LOCAL exato com segundos (ex: 2026-04-10 01:50:26)
+   string tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
+
+   // Horario do servidor (para referencia com o grafico)
+   string tsServer = TimeToString(sigTime, TIME_SECONDS);
+
+   // Simbolo e timeframe
+   string sym = Symbol();
+   string tf  = IntegerToString(Period()) + "m";
+
+   // Seta visual
+   string arrow = (direction == "CALL") ? "CALL ^" : "PUT  v";
+
+   // Score principal
+   int mainScore = (direction == "CALL") ? callScore : putScore;
+
+   // Linha principal: [LOCAL: 2026-04-10 01:50:26 | SRV: 06:50:26] EURUSD | 5m | CALL ^ | Score: 75 | CONFIRMED
+   string line = "[LOCAL: " + tsLocal + " | SRV: " + tsServer + "] "
+               + sym + " | " + tf + " | " + arrow
+               + " | Score: " + IntegerToString(mainScore)
+               + " | CONFIRMED";
+   FileWriteString(handle, line + "\r\n");
+
+   // Breakdown detalhado dos componentes (opcional)
+   if(TXT_Log_Breakdown)
+     {
+      string detail = "             RSI:" + IntegerToString(rsiPts)
+                    + " | BB:" + IntegerToString(bbPts)
+                    + " | Wick:" + IntegerToString(wickPts)
+                    + " | Imp:" + IntegerToString(impPts)
+                    + " | KC:" + IntegerToString(kelPts)
+                    + " | Eng:" + IntegerToString(engPts)
+                    + " | CALL:" + IntegerToString(callScore)
+                    + " vs PUT:" + IntegerToString(putScore)
+                    + " | Regime:" + IntegerToString(4 - regFails) + "/4"
+                    + " | Struct:" + (structOk ? "OK" : "FAIL")
+                    + " | Pattern:" + pattern;
+      FileWriteString(handle, detail + "\r\n");
+     }
+
+   // Separador visual
+   FileWriteString(handle, "------------------------------------------------------------\r\n");
+
+   FileClose(handle);
   }
 
 // =======================================================================
