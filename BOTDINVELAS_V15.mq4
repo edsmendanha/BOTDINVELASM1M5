@@ -1535,6 +1535,24 @@ void UpdatePanel()
   }
 
 // =======================================================================
+// Calcula horario local aproximado a partir do horario do servidor
+// Para sinais em tempo real usa TimeLocal() diretamente.
+// Para sinais historicos usa offset servidor->local via TimeCurrent()-TimeLocal().
+// =======================================================================
+string CalcLocalTime(datetime sigTime, bool isHistoric)
+  {
+   if(isHistoric)
+     {
+      // Aproxima horario local: subtrai o offset entre servidor e maquina local
+      int serverOffset = (int)(TimeCurrent() - TimeLocal());
+      datetime localTime = sigTime - serverOffset;
+      return TimeToString(localTime, TIME_DATE|TIME_SECONDS);
+     }
+   // Sinal em tempo real: usa TimeLocal() direto
+   return TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
+  }
+
+// =======================================================================
 // EXPORTACAO CSV
 // Formato: timestamp,symbol,timeframe,status,direction,call_score,put_score,
 //          pattern,rsi,bb,wick,impulse,keltner,engulf,regime_fails,structural,
@@ -1569,19 +1587,7 @@ void ExportCSV(datetime sigTime, string status, string dir,
      }
 
    // Calcula horario local do usuario
-   string tsLocal;
-   if(isHistoric)
-     {
-      // Para sinais historicos: aproxima horario local usando offset servidor->local
-      int serverOffset = (int)(TimeCurrent() - TimeLocal());
-      datetime localTime = sigTime - serverOffset;
-      tsLocal = TimeToString(localTime, TIME_DATE|TIME_SECONDS);
-     }
-   else
-     {
-      // Sinal em tempo real: usa TimeLocal() direto
-      tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
-     }
+   string tsLocal = CalcLocalTime(sigTime, isHistoric);
 
    // Escreve linha com todos os dados do sinal (incluindo novos filtros V15.4)
    string line = StringFormat(
@@ -1634,19 +1640,7 @@ void ExportTXT(datetime sigTime, string status, string direction,
      }
 
    // Calcula horario local do usuario
-   string tsLocal;
-   if(isHistoric)
-     {
-      // Para sinais historicos: aproxima horario local usando offset servidor->local
-      int serverOffset = (int)(TimeCurrent() - TimeLocal());
-      datetime localTime = sigTime - serverOffset;
-      tsLocal = TimeToString(localTime, TIME_DATE|TIME_SECONDS);
-     }
-   else
-     {
-      // Sinal em tempo real: usa TimeLocal() direto
-      tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
-     }
+   string tsLocal = CalcLocalTime(sigTime, isHistoric);
 
    // Horario do servidor para bater com o grafico
    string tsServer = TimeToString(sigTime, TIME_SECONDS);
