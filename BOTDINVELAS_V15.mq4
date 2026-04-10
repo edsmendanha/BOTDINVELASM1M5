@@ -10,9 +10,9 @@
 //+------------------------------------------------------------------+
 #property copyright   "BOTDINVELAS"
 #property link        "https://github.com/edsmendanha/BOTDINVELASM1M5"
-#property version     "15.5"
+#property version     "15.6"
 #property strict
-#property description "Motor V15.5 Qualidade Maxima | Log TXT CONFIRMED c/ horario local | Dois estagios"
+#property description "Motor V15.6 | TXT so tempo real + horario vela/entrada | Dois estagios"
 
 #property indicator_chart_window
 #property indicator_buffers 14
@@ -314,7 +314,7 @@ int OnInit()
    // Cria painel informativo
    if(Dashboard_Enable) CreatePanel();
 
-   IndicatorShortName("BOTDINVELAS V15.5 [" + IntegerToString(g_tf) + "m]");
+   IndicatorShortName("BOTDINVELAS V15.6 [" + IntegerToString(g_tf) + "m]");
    return(INIT_SUCCEEDED);
   }
 
@@ -419,15 +419,9 @@ int OnCalculate(const int rates_total,
             if(dir == 1) CrossBuf[bar-1]  = Low[bar-1]  - atrVal * 0.3;
             else         CrossBuf[bar-1]  = High[bar-1] + atrVal * 0.3;
            }
-
-          // Grava sinal historico no TXT (apenas na primeira passagem)
-          if(prev_calculated <= 0)
-             ExportTXT(Time[bar], histConfirmed?"CONFIRMED":"REJECTED", (dir==1)?"CALL":"PUT",
-                       callScore, putScore, (dir==1)?"ReversalV15_CALL":"ReversalV15_PUT",
-                       rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-                       regFails, true);
-        }
-     }
+           // historico nao grava no TXT (apenas sinais em tempo real)
+         }
+      }
 
    // -- 7b. Barra 1 (ultima fechada): verifica novo sinal para armar ---
    if(rates_total > 1)
@@ -601,11 +595,7 @@ void ArmSignal(int bar, int dir, int callScore, int putScore,
              rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
              regFails, true);
 
-   // Exporta TXT (internamente so grava se CONFIRMED)
-   ExportTXT(Time[bar], "ARMED", (dir==1) ? "CALL" : "PUT",
-             callScore, putScore, pattern,
-             rsiPts, bbPts, wickPts, impPts, kelPts, engPts,
-             regFails, true);
+   // TXT nao grava ARMED (apenas CONFIRMED em tempo real)
   }
 
 // =======================================================================
@@ -637,12 +627,6 @@ void ProcessBar0()
          CrossBuf[confIdx] = High[confIdx] + atrConf * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
-                g_armedCallScore, g_armedPutScore, g_armedPattern,
-                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
-                g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
-
-      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -719,12 +703,6 @@ void ProcessBar0()
          CrossBuf[0] = High[0] + atrNow * 0.3;
 
       ExportCSV(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
-                g_armedCallScore, g_armedPutScore, g_armedPattern,
-                g_armedRsiPts, g_armedBbPts, g_armedWickPts,
-                g_armedImpPts, g_armedKelPts, g_armedEngPts,
-                g_armedRegFails, g_armedStructOk);
-
-      ExportTXT(g_armedBarTime, "REJECTED", (g_armedDir==1)?"CALL":"PUT",
                 g_armedCallScore, g_armedPutScore, g_armedPattern,
                 g_armedRsiPts, g_armedBbPts, g_armedWickPts,
                 g_armedImpPts, g_armedKelPts, g_armedEngPts,
@@ -1322,9 +1300,9 @@ void ExportCSV(datetime sigTime, string status, string dir,
 
 // =======================================================================
 // EXPORTACAO TXT ORGANIZADO
-// Grava apenas sinais CONFIRMADOS com horario local exato (com segundos)
-// Usa FILE_COMMON para que todos os graficos compartilhem o mesmo arquivo
-// Caminho: C:\Users\{user}\AppData\Roaming\MetaQuotes\Terminal\Common\Files\
+// Grava apenas sinais CONFIRMADOS em tempo real com horario local exato
+// NAO grava sinais historicos (loop de bar >= 2)
+// Caminho: mesma pasta do CSV (MQL4\Files\)
 // =======================================================================
 void ExportTXT(datetime sigTime, string status, string direction,
                int callScore, int putScore, string pattern,
@@ -1333,11 +1311,8 @@ void ExportTXT(datetime sigTime, string status, string direction,
   {
    if(!Enable_TXT_Log) return;
 
-   // Grava APENAS sinais confirmados no TXT
-   if(status != "CONFIRMED") return;
-
-   // Abrir arquivo em modo APPEND com FILE_COMMON (pasta compartilhada)
-   int handle = FileOpen(TXT_Log_Filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   // Abrir arquivo em modo APPEND (mesma pasta do CSV - MQL4\Files)
+   int handle = FileOpen(TXT_Log_Filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(handle == INVALID_HANDLE) return;
 
    // Posicionar no final do arquivo (append)
@@ -1347,17 +1322,21 @@ void ExportTXT(datetime sigTime, string status, string direction,
    if(FileTell(handle) == 0)
      {
       FileWriteString(handle, "============================================================\r\n");
-      FileWriteString(handle, "  BOTDINVELAS V15.5 - Log de Sinais CONFIRMADOS\r\n");
+      FileWriteString(handle, "  BOTDINVELAS V15.6 - Log de Sinais CONFIRMADOS (tempo real)\r\n");
       FileWriteString(handle, "  Gerado automaticamente pelo indicador MT4\r\n");
       FileWriteString(handle, "  Horario: LOCAL (sua maquina)\r\n");
       FileWriteString(handle, "============================================================\r\n\r\n");
      }
 
-   // Horario LOCAL exato com segundos (ex: 2026-04-10 01:50:26)
+   // Horario LOCAL exato com segundos (ex: 2026.04.10 09:15:26)
    string tsLocal = TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS);
 
-   // Horario do servidor (para referencia com o grafico)
-   string tsServer = TimeToString(sigTime, TIME_SECONDS);
+   // Horario de abertura da vela de sinal (Time[bar] do servidor)
+   string tsCandle = TimeToString(sigTime, TIME_MINUTES);
+
+   // Proxima vela M5 (onde o bot deve entrar) = sigTime + Period()*60
+   datetime nextCandleTime = sigTime + Period() * 60;
+   string tsEntry = TimeToString(nextCandleTime, TIME_MINUTES);
 
    // Simbolo e timeframe
    string sym = Symbol();
@@ -1369,10 +1348,10 @@ void ExportTXT(datetime sigTime, string status, string direction,
    // Score principal
    int mainScore = (direction == "CALL") ? callScore : putScore;
 
-   // Linha principal: [LOCAL: 2026-04-10 01:50:26 | SRV: 06:50:26] EURUSD | 5m | CALL ^ | Score: 75 | CONFIRMED
-   string line = "[LOCAL: " + tsLocal + " | SRV: " + tsServer + "] "
-               + sym + " | " + tf + " | " + arrow
+   // Linha principal: [2026.04.10 09:15:26] EURUSD | 5m | CALL ^ | Score: 75 | Vela:09:10 | Entrada:09:15 | CONFIRMED
+   string line = "[" + tsLocal + "] " + sym + " | " + tf + " | " + arrow
                + " | Score: " + IntegerToString(mainScore)
+               + " | Vela:" + tsCandle + " | Entrada:" + tsEntry
                + " | CONFIRMED";
    FileWriteString(handle, line + "\r\n");
 
